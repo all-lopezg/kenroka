@@ -9,6 +9,9 @@
 # Para quedarse en una versión concreta (una flota, un entorno que no cambia):
 #   KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 #
+# Los flags se le pasan al script tal cual. El que no escribe nada:
+#   curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | sudo bash -s -- --audit
+#
 # Por qué existe este archivo en vez de apuntar el curl directamente al script:
 # con `curl | bash` el stdin del proceso es la tubería, así que cualquier `read`
 # del script se come las siguientes líneas de sí mismo. secure-vps.sh necesita

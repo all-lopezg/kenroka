@@ -11,7 +11,7 @@
  ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
  █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
  ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
- ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╝ ██║  ██╗██║  ██║
+ ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╔╝ ██║  ██╗██║  ██║
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
 ```
 
@@ -38,7 +38,7 @@ terminal para la prueba de acceso SSH.
 
 El one-liner lanza directo el asistente guiado. Si prefieres elegir fases sueltas, o
 ver el estado sin cambiar nada, descarga el script y corrélo sin argumentos: el menú
-ofrece las 11 acciones.
+ofrece las 12 acciones.
 
 ```bash
 curl -fsSL -o secure-vps.sh \
@@ -46,6 +46,13 @@ curl -fsSL -o secure-vps.sh \
 
 less secure-vps.sh
 sudo bash secure-vps.sh
+```
+¿Quieres el diagnóstico antes de que cambie algo? `--audit` es de solo lectura: quién
+puede entrar, qué acepta realmente `sshd`, qué puertos están expuestos y qué falta endurecer. No
+escribe ningún archivo y no hace ninguna petición saliente.
+
+```bash
+sudo bash secure-vps.sh --audit > auditoria.txt
 ```
 
 ## Qué hace
@@ -105,7 +112,7 @@ ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 
 - No pipea el script principal en `bash`. El script necesita entrada interactiva, así que primero se descarga y se verifica.
 - Revertir restaura la configuración de SSH, UFW y fail2ban. **No** deshace las actualizaciones de paquetes ni borra la clave pública que instaló.
-- No es una auditoría de seguridad. Si el servidor ya está comprometido, trátalo como comprometido: endurecerlo después no establece confianza.
+- `--audit` reporta la configuración tal como está. No es una auditoría de seguridad: si el servidor ya está comprometido, trátalo como comprometido — endurecerlo después no establece confianza.
 - Nunca genera un par de claves en el servidor. La parte privada no debería existir ahí.
 
 ## Automatización
@@ -121,6 +128,7 @@ sudo bash secure-vps.sh --help
 | `--allow-lockdown` | Cierra el acceso sin la confirmación humana. Úsalo entendiendo las implicaciones de recuperación. |
 | `--upgrade` / `--no-upgrade` | Aplicar, o solo reportar, las actualizaciones pendientes. |
 | `--lang es\|en` | Fuerza el idioma detectado. |
+| `--audit` | Reporte de estado de solo lectura: qué está abierto, qué está expuesto y qué correr después. |
 
 > El cierre automatizado puede dejarte sin acceso SSH si la configuración resultante es incorrecta.
 
@@ -131,8 +139,8 @@ Cubre el cierre y el rollback, la cuenta atrás disparando de verdad, el cambio 
 puerto y sus conflictos, la idempotencia byte a byte, el flujo guiado de primera
 vez, el aviso de puertos UDP y el rescate desde el menú.
 
-- **18** escenarios end-to-end
-- **134** asertos unitarios
+- **19** escenarios end-to-end
+- **213** asertos unitarios
 - **9** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash

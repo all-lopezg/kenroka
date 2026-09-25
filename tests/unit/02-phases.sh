@@ -14,6 +14,10 @@ success() { :; }
 log()     { :; }
 
 SCRIPT_VERSION="test"
+# Los colores y las rutas readonly del script no vienen con extract_fns: sin
+# esto, cualquier funcion que los cite revienta por set -u en el arnés.
+RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' NC=''
+REBOOT_FLAG="$WORK/reboot-required"
 HARDENING_FILE="$WORK/99-hardening.conf"
 JAIL_LOCAL="$WORK/jail.local"
 LOG_FILE="$WORK/out.log"
@@ -370,5 +374,306 @@ apt-get() {
 out="$(fase_2b_updates 2>&1)"; check "un upgrade roto detiene la fase" "1" "$?"
 has "y dice que para ANTES de tocar el acceso" "ANTES de tocar el acceso" "$out"
 unset -f apt-get
+
+# ============================================================
+# MODO AUDITORÍA (--audit)
+# ============================================================
+# El contrato del modo es "esto no escribe": todo lo que toca son stubs aquí, y
+# la prueba de que no deja nada en disco se hace de verdad en el escenario 19.
+echo "== audit: utilidades de lectura"
+extract_fns audit_note audit_line audit_head audit_expect audit_eff_val audit_eff_rest \
+            audit_listening audit_session_ip audit_dropin_scan audit_key_perms audit_section_system \
+            has_ufw has_fail2ban \
+            audit_section_users audit_section_ssh audit_section_firewall \
+            audit_section_fail2ban audit_section_updates audit_section_tool audit_findings
+
+PRETTY_NAME="Ubuntu 24.04.1 LTS"
+VERSION_ID="24.04"
+HARDENING_FILE="$WORK/aud/99-hardening.conf"
+SOCKET_DROPIN="$WORK/aud/99-socket.conf"
+ROLLBACK_BIN="$WORK/aud/rollback"
+JAIL_LOCAL="$WORK/aud/jail.local"
+SNAPSHOTS_DIR="$WORK/aud/snapshots"
+REBOOT_FLAG="$WORK/aud/reboot-required"
+mkdir -p "$WORK/aud"
+
+reset_audit() { AUDIT_FINDINGS=""; AUDIT_N=0; AUDIT_EFF=""; AUDIT_SUGGEST_USER=""; }
+note_has()   { case "$AUDIT_FINDINGS" in *"$1"*) ok "hallazgo '$1'";; *) bad "falta el hallazgo '$1' en: $AUDIT_FINDINGS";; esac; }
+note_hasnt() { case "$AUDIT_FINDINGS" in *"$1"*) bad "sobra un hallazgo con '$1'";; *) ok "sin hallazgo de '$1'";; esac; }
+to_file() { "$@" > "$WORK/aud/out" 2>&1; }   # sin subshell: los contadores siguen vivos
+
+reset_audit
+audit_note "uno"
+audit_note "dos"
+check "los hallazgos se numeran" "2" "$AUDIT_N"
+has "cada uno con su número" "2) dos" "$AUDIT_FINDINGS"
+reset_audit
+silence audit_expect no no "PermitRootLogin" bad "no deberia aparecer"
+check "un valor bueno no suma hallazgo" "0" "$AUDIT_N"
+check "y pinta la etiqueta leida" "1" "$(grep -c PermitRootLogin "$WORK/silence.out")"
+silence audit_expect yes no "PermitRootLogin" bad "root puede entrar por SSH"
+check "un valor malo suma su hallazgo" "1" "$AUDIT_N"
+note_has "root puede entrar por SSH"
+
+echo "== audit_session_ip (la IP de acceso, sin salir a internet)"
+SSH_CONNECTION=""
+check "sin SSH_CONNECTION no hay IP" "" "$(audit_session_ip)"
+SSH_CONNECTION="198.51.100.7 55234 185.147.157.139 22"
+check "toma la direccion del servidor, no la del cliente" "185.147.157.139" "$(audit_session_ip)"
+SSH_CONNECTION=""
+PUBLIC_IP=""
+reset_audit
+to_file audit_section_system
+out="$(cat "$WORK/aud/out")"
+has "y la seccion lo dice en vez de inventarla" "no hace peticiones salientes" "$out"
+PUBLIC_IP="203.0.113.9"
+
+echo "== audit_listening (nada de loopback, TCP y UDP separados)"
+ss() { case "$*" in
+    *tln*) printf '%s\n' 'LISTEN 0 128 0.0.0.0:22' 'LISTEN 0 128 127.0.0.1:3306' 'LISTEN 0 128 [::]:80' ;;
+    *uln*) printf '%s\n' 'UNCONN 0 0 0.0.0.0:5353' 'UNCONN 0 0 127.0.0.1:68' ;;
+esac; }
+check "tcp deja fuera el loopback" "22 80 " "$(audit_listening tcp)"
+check "udp también" "5353 " "$(audit_listening udp)"
+ss() { :; }
+check "sin nada a la escucha sale vacío" "" "$(audit_listening tcp)"
+
+echo "== audit_dropin_scan (sshd usa el primer valor que lee)"
+mkdir -p "$WORK/aud/dropins"
+printf 'PasswordAuthentication yes\n' > "$WORK/aud/dropins/50-cloud-init.conf"
+printf 'MaxAuthTries 3\nPermitRootLogin no\n' > "$WORK/aud/dropins/99-hardening.conf"
+reset_audit
+to_file audit_dropin_scan "$WORK/aud/dropins"
+out="$(cat "$WORK/aud/out")"
+has "lista los dos archivos" "50-cloud-init.conf" "$out"
+has "con su numero de lineas" "2 lineas" "$out"
+note_has "reabre contraseña o root"
+reset_audit
+to_file audit_dropin_scan "$WORK/aud/noexiste"
+check "un directorio ausente no aborta" "0" "$?"
+check "y no suma hallazgos" "0" "$AUDIT_N"
+
+echo "== audit_key_perms (StrictModes)"
+AH="$WORK/aud/homes"
+user_home() { case "$1" in root) printf '%s' "$AH/root";; *) printf '%s' "$AH/$1";; esac; }
+mkdir -p "$AH/root/.ssh" "$AH/ana/.ssh" "$AH/luis/.ssh"
+chmod 700 "$AH/root" "$AH/root/.ssh" "$AH/ana" "$AH/ana/.ssh"
+chmod 777 "$AH/luis/.ssh"
+printf 'ssh-ed25519 AAAAC3Nza ana@laptop\n' > "$AH/root/.ssh/authorized_keys"
+printf 'ssh-ed25519 AAAAC3Nza ana@laptop\n' > "$AH/ana/.ssh/authorized_keys"
+: > "$AH/luis/.ssh/authorized_keys"
+chmod 600 "$AH/root/.ssh/authorized_keys" "$AH/ana/.ssh/authorized_keys" 2>/dev/null || true
+# stat de GNU no existe en macOS: la versión portable deja probar ambos.
+_file_mode() {
+    if [[ -e "$1" ]]; then stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; fi
+    return 0
+}
+reset_audit
+to_file audit_key_perms ana
+check "un home 700 no es hallazgo" "0" "$AUDIT_N"
+reset_audit
+to_file audit_key_perms luis
+check "un .ssh 777 si lo es" "1" "$AUDIT_N"
+note_has "hacen que sshd ignore su clave"
+
+echo "== audit_section_users"
+other_human_users() { printf '%s' "$FAKE_HUMANS"; }
+getent() { case "$*" in
+    "group sudo")   printf 'sudo:x:27:ana,luis\n' ;;
+    "passwd root")  printf 'root:x:0:0::%s:/bin/bash\n' "$AH/root" ;;
+    "passwd ana")   printf 'ana:x:1000:1000::%s:/bin/bash\n' "$AH/ana" ;;
+    "passwd luis")  printf 'luis:x:1001:1001::%s:/bin/bash\n' "$AH/luis" ;;
+esac; }
+passwd() { case "$2" in
+    root) printf 'root L -\n' ;;
+    ana)  printf 'ana P v\n' ;;
+    luis) printf 'luis NP \n' ;;
+esac; }
+reset_audit
+FAKE_HUMANS="ana luis"
+to_file audit_section_users
+out="$(cat "$WORK/aud/out")"
+has "nombra a los usuarios humanos" "ana luis" "$out"
+has "dice quien tiene sudo" "sudo:si" "$out"
+has "cuenta las claves de cada uno" "claves:1" "$out"
+has "muestra el estado de la contraseña" "pass:P" "$out"
+check "sugiere al primer humano para --user" "ana" "$AUDIT_SUGGEST_USER"
+note_has "'luis' no tiene ninguna clave autorizada"
+note_has "hacen que sshd ignore su clave"
+note_hasnt "con humanos no habla de root-only" "solo existe root"
+reset_audit
+FAKE_HUMANS=""
+to_file audit_section_users
+out="$(cat "$WORK/aud/out")"
+check "sin humanos no hay a quien sugerir" "" "$AUDIT_SUGGEST_USER"
+has "lo dice en la linea de usuarios" "solo existe root" "$out"
+note_hasnt "y el sudo sigue cubierto" "escalar a root"
+getent() { case "$*" in "group sudo") printf 'sudo:x:27:\n';; "passwd root") printf 'root:x:0:0::/root:/bin/bash\n';; esac; }
+passwd() { printf 'root L -\n'; }
+reset_audit
+to_file audit_section_users
+note_has "no hay forma segura de cerrar el acceso"
+note_has "escalar a root"
+
+echo "== audit_section_ssh"
+sshd() { case "$1" in
+    -T) printf '%s\n' "port 22" "permitrootlogin without-password" "passwordauthentication yes" \
+             "pubkeyauthentication yes" "kbdinteractiveauthentication yes" "maxauthtries 6" \
+             "maxsessions 10" "x11forwarding yes" "clientaliveinterval 0" ;;
+    -t) return 0 ;;
+esac; }
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:22 users:("sshd",pid=1,fd=3)'; }
+SOCKET_ACTIVATED=0
+reset_audit
+to_file audit_section_ssh
+out="$(cat "$WORK/aud/out")"
+check "el guard toma el puerto de sshd" "22" "$CURRENT_PORT"
+has "lista la config efectiva clave" "PermitRootLogin" "$out"
+has "informa de MaxAuthTries" "MaxAuthTries" "$out"
+note_has "SSH sigue en el 22"
+note_has "root puede entrar por SSH"
+note_has "El login por contraseña sigue abierto"
+note_has "AllowUsers vacío"
+note_hasnt "una clave aceptada no es hallazgo" "PubkeyAuthentication=yes"
+AUDIT_EFF=""
+reset_audit
+sshd() { case "$1" in -T) printf '%s\n' "port 2222" "permitrootlogin no" "passwordauthentication no" \
+                             "pubkeyauthentication yes" "kbdinteractiveauthentication no" "allowusers ana" ;;
+               -t) return 0 ;; esac; }
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:2222 users:("sshd",pid=1,fd=3)'; }
+to_file audit_section_ssh
+check "nada que hallar en un equipo cerrado" "0" "$AUDIT_N"
+check "y el puerto queda registrado" "2222" "$CURRENT_PORT"
+reset_audit
+sshd() { printf '%s\n' 'Missing privilege separation directory: /run/sshd' >&2; return 255; }
+to_file audit_section_ssh
+out="$(cat "$WORK/aud/out")"
+has "avisa si sshd -T no responde" "privilege separation" "$out"
+note_has "No pude leer la config efectiva"
+hasnt "no inventa valores" "PermitRootLogin" "$out"
+
+echo "== audit_section_firewall"
+ufw() { case "$*" in
+    *"status numbered"*) printf '%s\n' 'Status: inactive' ;;
+    *) printf 'Status: inactive\n' ;;
+esac; }
+ss() { case "$*" in
+    *tln*) printf '%s\n' 'LISTEN 0 128 0.0.0.0:22' 'LISTEN 0 128 0.0.0.0:80' 'LISTEN 0 128 127.0.0.1:3306' ;;
+    *uln*) printf '%s\n' 'UNCONN 0 0 0.0.0.0:5353' ;;
+esac; }
+CURRENT_PORT=22
+reset_audit
+to_file audit_section_firewall
+out="$(cat "$WORK/aud/out")"
+has "lista el TCP expuesto" "TCP a la escucha" "$out"
+has "da el comando para abrir el 80" "sudo ufw allow 80/tcp" "$out"
+has "y el del 5353/udp" "sudo ufw allow 5353/udp" "$out"
+hasnt "el loopback no sale como riesgo" "3306" "$out"
+note_has "UFW inactivo"
+note_has "Al activar UFW sin abrir 22"
+ufw() { case "$*" in
+    *"status numbered"*) printf '%s\n' '[ 1] 22/tcp  ALLOW IN  Anywhere' ;;
+    *) printf 'Status: active\n' ;;
+esac; }
+reset_audit
+to_file audit_section_firewall
+check "y sigue listando los demas sin regla" "1" "$AUDIT_N"
+note_hasnt "pero ya no avisa del encierro" "te quedas fuera"
+has_ufw() { return 1; }
+reset_audit
+to_file audit_section_firewall
+note_has "Sin cortafuegos"
+has_ufw() { command -v ufw >/dev/null 2>&1; }
+
+echo "== audit_section_fail2ban"
+timeout() { shift; "$@"; }
+systemctl() { case "$*" in
+    *"is-active fail2ban"*) printf 'active\n' ;;
+    *"is-enabled fail2ban"*) printf 'enabled\n' ;;
+    *) printf 'unknown\n' ;;
+esac; }
+fail2ban-client() {
+    case "$*" in
+        *"status sshd"*) printf '%s\n' 'Status for the jail: sshd' '|  Currently banned:  3' '|  Total banned:      9' ;;
+    esac
+}
+current_admin_ips() { printf '198.51.100.7'; }
+printf 'ignoreip = 127.0.0.1/8 ::1 198.51.100.7\n' > "$JAIL_LOCAL"
+reset_audit
+to_file audit_section_fail2ban
+out="$(cat "$WORK/aud/out")"
+has "reporta el jail activo" "jail sshd" "$out"
+has "y los baneos" "Currently banned" "$out"
+has "muestra las IPs excluidas" "198.51.100.7" "$out"
+check "sin riesgos aqui" "0" "$AUDIT_N"
+: > "$JAIL_LOCAL"
+reset_audit
+to_file audit_section_fail2ban
+note_has "sin ignoreip"
+fail2ban-client() { return 1; }
+reset_audit
+to_file audit_section_fail2ban
+note_has "sin jail sshd"
+
+echo "== audit_section_updates"
+apt-get() { [[ "$*" == *-s* ]] && printf '%s\n' "$APT_SIM"; return 0; }
+dpkg-query() { return 1; }
+reset_audit
+to_file audit_section_updates
+out="$(cat "$WORK/aud/out")"
+has "cuenta los pendientes" "De seguridad" "$out"
+has "aclara que no refresco los indices" "no corre apt-get update" "$out"
+note_has "parches de seguridad sin aplicar"
+note_has "Nadie aplica los parches"
+touch "$REBOOT_FLAG"
+reset_audit
+to_file audit_section_updates
+note_has "sigue siendo el viejo"
+rm -f "$REBOOT_FLAG"
+unset -f apt-get dpkg-query
+
+echo "== audit_section_tool"
+SNAP_A="$SNAPSHOTS_DIR/20260101-000001.aaaaaa"
+SNAP_B="$SNAPSHOTS_DIR/20260102-000002.bbbbbb"
+mkdir -p "$SNAP_A" "$SNAP_B"
+touch "$SNAP_A/READY" "$SNAP_B/READY" "$SNAP_B/CONFIRMED"
+list_pending_rollbacks() { :; }
+reset_audit
+to_file audit_section_tool
+out="$(cat "$WORK/aud/out")"
+has "cuenta los snapshots" "2 (" "$out"
+has "y los sin confirmar" "sin confirmar: 1" "$out"
+note_has "sin marcar CONFIRMED"
+check "sin cuenta atras no hay ese hallazgo" "1" "$AUDIT_N"
+list_pending_rollbacks() { printf 'secure-vps-rollback-x.timer\n'; }
+reset_audit
+to_file audit_section_tool
+note_has "sudo systemctl stop secure-vps-rollback-x.timer"
+rm -rf "$SNAPSHOTS_DIR"
+reset_audit
+to_file audit_section_tool
+out="$(cat "$WORK/aud/out")"
+has "dice que nunca se corrio aqui" "nunca se corrio el endurecido" "$out"
+list_pending_rollbacks() { systemctl list-units --all --no-legend --no-pager --type=timer --state=active 'secure-vps-rollback*' 2>/dev/null | awk '{print $1}'; }
+
+echo "== audit_findings (el cierre del reporte)"
+reset_audit
+out="$(audit_findings 2>&1)"
+has "sin hallazgos lo dice claro" "No encontré nada que corregir" "$out"
+reset_audit
+audit_note "primero"
+audit_note "segundo"
+CURRENT_PORT=22
+AUDIT_SUGGEST_USER="ana"
+out="$(audit_findings 2>&1)"
+has "numera los hallazgos" "2) segundo" "$out"
+has "sugiere el comando con puerto" "--port 2222 --user ana" "$out"
+has "y recuerda que no escribio" "--audit solo lee" "$out"
+CURRENT_PORT=2222
+out="$(audit_findings 2>&1)"
+hasnt "fuera del 22 no propone --port" "--port 2222" "$out"
+out="$(LANG=C UI_LANG=en audit_findings 2>&1)"
+has "en ingles el cierre dice Findings" "Findings" "$out"
+hasnt "y no queda espanol" "Hallazgos" "$out"
 
 summary

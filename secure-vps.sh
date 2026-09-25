@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.0.1
+# Versión: 1.1.0
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.0.1"
+readonly SCRIPT_VERSION="1.1.0"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -34,6 +34,7 @@ readonly SNAPSHOTS_DIR="$STATE_DIR/snapshots"
 readonly SOCKET_DROPIN_DIR="/etc/systemd/system/ssh.socket.d"
 readonly SOCKET_DROPIN="$SOCKET_DROPIN_DIR/99-secure-vps.conf"
 readonly ROLLBACK_BIN="/usr/local/bin/secure-vps-rollback"
+readonly REBOOT_FLAG="/var/run/reboot-required"
 
 # Estado global (se rellena en runtime)
 PUBLIC_IP=""
@@ -75,6 +76,7 @@ CANDIDATE_KEYS_FILE=""        # tsv: número, clave, archivo de origen, huella
 VALID_FINGERPRINT=""
 ADMIN_IPS=""
 LOCKDOWN=1
+AUDIT_MODE=0            # --audit: reporte de solo lectura, no toca nada
 
 # Colores (se desactivan si no hay TTY)
 if [[ -t 1 ]]; then
@@ -357,7 +359,12 @@ Opciones:
   --novato             Guía paso a paso para quien nunca usó SSH. Se activa
                        solo si llegas sin clave o desde la consola del proveedor.
   --experto            Sin textos de guía: el flujo directo de siempre.
+  --audit              Reporte de solo lectura: qué está endurecido, qué falta
+                       y qué riesgos hay. No escribe nada. Impide preguntas.
   --help               Mostrar esta ayuda.
+
+Ejemplo de auditoría (antes de cambiar nada; guarda el texto para revisarlo):
+  sudo bash secure-vps.sh --audit > auditoria.txt
 
 Ejemplo interactivo (el recomendado: la fase 3 te pide confirmar desde otra terminal):
   sudo bash secure-vps.sh --user administrador --port 2222
@@ -401,7 +408,12 @@ Options:
                        Turns itself on if you arrive without a key or from the
                        provider's web console.
   --experto            No guidance text: the direct flow as always.
+  --audit              Read-only report: what is hardened, what is missing and
+                       what is risky. Writes nothing; implies no prompts.
   --help               Show this help.
+
+Audit example (before changing anything; keep the text to review it):
+  sudo bash secure-vps.sh --audit > audit.txt
 
 Interactive example (recommended: phase 3 asks you to confirm from another terminal):
   sudo bash secure-vps.sh --user administrador --port 2222
@@ -484,6 +496,10 @@ parse_args() {
             --experto|--plain) GUIDED_MODE=off; shift ;;
             --upgrade)         UPGRADE_MODE=yes; shift ;;
             --no-upgrade)      UPGRADE_MODE=no; shift ;;
+            # --audit nunca debe quedarse esperando una 's': al responderle que
+            # no es interactivo, las preguntas de las verificaciones previas se
+            # saltan y el reporte siempre sale.
+            --audit)           AUDIT_MODE=1; NON_INTERACTIVE=1; shift ;;
             --lang)            require_val "$@"
                                case "$2" in es|en) UI_LANG="$2";; *) error "$(ui "Idioma no soportado: usa --lang es o --lang en" "Unsupported language: use --lang es or --lang en")"; exit 1;; esac
                                shift 2 ;;
@@ -521,7 +537,9 @@ parse_args() {
     # perfectamente correcto se rechaza por no traer --pubkey.
     resolve_pubkey
 
-    if [[ $NON_INTERACTIVE -eq 1 ]]; then
+    # Las obligaciones del modo desatendido son del endurecido (usuario, clave,
+    # sudo, riesgo de encierro). Una auditoría no necesita ninguna.
+    if [[ $NON_INTERACTIVE -eq 1 && $AUDIT_MODE -eq 0 ]]; then
         if [[ -z "$USERNAME" ]]; then
             error "$(ui "En modo no interactivo, --user es obligatorio." "In non-interactive mode, --user is required.")"
             exit 1
@@ -1410,7 +1428,7 @@ report_pending_updates() {
 }
 
 reboot_hint() {
-    if [[ -f /var/run/reboot-required ]]; then
+    if [[ -f "$REBOOT_FLAG" ]]; then
         warn "$(ui "Hace falta reiniciar: el kernel que está corriendo sigue siendo el viejo, así que los parches nuevos aún no hacen efecto." "A reboot is needed: the running kernel is still the old one, so the new patches are not in effect yet.")"
         echo "    sudo reboot"
     fi
@@ -2285,6 +2303,482 @@ EOF
 }
 
 # ============================================================
+# MODO AUDITORÍA: --audit
+# ============================================================
+# Para quien quiere saber QUÉ tiene flojo antes de dejar que un script lo cambie
+# (o para que un tercero te mande el diagnóstico por escrito). Todo lo de esta
+# sección es de lectura: sin mkdir, sin backup, sin snapshot, sin flock, sin
+# apt-get update, sin crear /run/sshd y sin escribir en el log. Lo único que se
+# invoca son ss, sshd -T/-t, ufw status, fail2ban-client status, systemctl
+# is-*/list-units, apt-get -s y lecturas de archivos.
+
+AUDIT_EFF=""              # config efectiva de sshd (salida de 'sshd -T')
+AUDIT_FINDINGS=""
+AUDIT_N=0
+AUDIT_SUGGEST_USER=""
+
+audit_note() {
+    AUDIT_N=$((AUDIT_N + 1))
+    AUDIT_FINDINGS="${AUDIT_FINDINGS}  ${AUDIT_N}) $1
+"
+    return 0
+}
+
+# Etiquetas sin tilde: con LC_ALL=C printf rellena por bytes y una tilde desplaza
+# media columna del valor.
+audit_line() {
+    local mark="   "
+    case "$1" in
+        ok)   mark="${GREEN}  ✔${NC}" ;;
+        warn) mark="${YELLOW}  !${NC} " ;;
+        bad)  mark="${RED}  ✘${NC} " ;;
+    esac
+    printf '%s %-23s %s\n' "$mark" "$2" "${3:-—}"
+    return 0
+}
+
+audit_head() {
+    printf '\n%s %s\n' "${BOLD}${CYAN}[$1/8]${NC}" "${BOLD}$2${NC}"
+    return 0
+}
+
+# SSH_CONNECTION trae "ip_cliente puerto_cliente ip_servidor puerto_servidor": el
+# tercer campo es la dirección a la que el operador se conectó, que es la que
+# sirve para el comando ssh. Vacío si la sesión no es SSH.
+audit_session_ip() {
+    printf '%s' "${SSH_CONNECTION:-}" | awk '{print $3}'
+}
+
+# audit_expect <valor> <valor-bueno> <etiqueta> <severidad> <hallazgo>
+audit_expect() {
+    local mark=ok
+    if [[ "$1" != "$2" ]]; then mark="${4:-warn}"; fi
+    audit_line "$mark" "$3" "${1:-?}"
+    if [[ "$mark" != ok && -n "${5:-}" ]]; then audit_note "${5}"; fi
+    return 0
+}
+
+# 'sshd -T' es la config REAL tras resolver los Include: la única forma de ver
+# qué valor está vigente cuando cloud-init y el archivo de endurecido discrepan.
+audit_eff_val() {
+    printf '%s\n' "$AUDIT_EFF" | awk -v k="$1" 'tolower($1) == k {print $2; exit}'
+}
+
+audit_eff_rest() {
+    printf '%s\n' "$AUDIT_EFF" | awk -v k="$1" 'tolower($1) == k {sub(/^[^ ]+ +/, ""); print; exit}'
+}
+
+# Puertos escuchados por protocolo, sin loopback. Vacío si no escucha nada.
+audit_listening() {
+    local raw=""
+    case "$1" in
+        tcp) raw=$(ss -Htln 2>/dev/null || true) ;;
+        udp) raw=$(ss -Huln 2>/dev/null || true) ;;
+    esac
+    printf '%s\n' "$raw" | awk '{print $4}' \
+        | grep -vE '^(127\.|\[::1\]|::1)' | grep -oE '[0-9]+$' | sort -un | tr '\n' ' '
+    return 0
+}
+
+# Predicados aparte (y no un 'command -v' en el cuerpo de la sección) para que
+# las pruebas unitarias puedan forzar la rama "no instalado" sin desinstalar.
+has_ufw() { command -v ufw >/dev/null 2>&1; }
+has_fail2ban() { command -v fail2ban-client >/dev/null 2>&1; }
+
+audit_section_system() {
+    local up
+    audit_head 1 "$(ui "Sistema y sesión" "System and session")"
+    audit_line ok "Ubuntu" "$PRETTY_NAME"
+    audit_line info "Kernel" "$(uname -r)"
+    up=$(awk '{printf "%.0fd %.0dh", $1/86400, ($1 % 86400)/3600}' /proc/uptime 2>/dev/null) || true
+    audit_line info "$(ui "Tiempo encendido" "Uptime")" "${up:-?}"
+    audit_line info "$(ui "IP publica" "Public IP")" "${PUBLIC_IP:-$(ui "sin consultar: --audit no hace peticiones salientes" "not looked up: --audit makes no outbound request")}"
+    case "$VERSION_ID" in
+        22.04|24.04)
+            audit_line ok "$(ui "Version probada" "Tested version")" "$VERSION_ID"
+            ;;
+        *)
+            audit_line warn "$(ui "Version probada" "Tested version")" "$VERSION_ID"
+            audit_note "$(ui "Ubuntu $VERSION_ID no está en la matriz probada (22.04 y 24.04): el endurecido te pedirá revisar cada cambio." "Ubuntu $VERSION_ID is not in the tested matrix (22.04 and 24.04): hardening will ask you to review every change.")"
+            ;;
+    esac
+    if [[ $ON_CONSOLE -eq 1 ]]; then
+        audit_line warn "$(ui "Sesion actual" "Current session")" "$(ui "consola web del proveedor, no SSH" "provider web console, not SSH")"
+        echo "     $(ui "Desde la consola no se puede probar un login nuevo: por eso el script nunca cierra el acceso desde ahí." "A new login cannot be tested from the console: that is why the script never locks down from there.")"
+    else
+        audit_line ok "$(ui "Sesion actual" "Current session")" "SSH"
+    fi
+}
+
+# StrictModes hace que sshd ignore authorized_keys si el home o el .ssh son
+# escribibles por grupo u otros: es la causa nº1 de "puse la clave y sigue
+# pidiendo contraseña".
+audit_key_perms() {
+    local u="$1" home hm sm km
+    home=$(user_home "$u")
+    [[ -n "$home" && -d "$home/.ssh" ]] || return 0
+    hm=$(_file_mode "$home")
+    sm=$(_file_mode "$home/.ssh")
+    km=$(_file_mode "$home/.ssh/authorized_keys")
+    if world_or_group_writable "$hm" || world_or_group_writable "$sm" || world_or_group_writable "$km"; then
+        audit_line warn "permisos $u" "home=$hm .ssh=$sm keys=$km"
+        audit_note "$(ui "Los permisos de '$u' (home=$hm .ssh=$sm authorized_keys=$km) hacen que sshd ignore su clave." "The permissions of '$u' (home=$hm .ssh=$sm authorized_keys=$km) make sshd ignore its key.")"
+        return 1
+    fi
+    return 0
+}
+
+audit_section_users() {
+    local humans u home keys st usable total=0 sudo_grp
+    audit_head 2 "$(ui "Quienes pueden entrar" "Who can get in")"
+    humans=$(other_human_users)
+    sudo_grp=$(getent group sudo 2>/dev/null | cut -d: -f4 | tr ',' ' ') || true
+    if [[ -z "$humans" ]]; then
+        audit_line bad "$(ui "Usuarios humanos" "Human users")" "$(ui "solo existe root" "only root exists")"
+        audit_note "$(ui "Sin un usuario administrador no hay forma segura de cerrar el acceso: la fase 1 crea uno (--user NOMBRE lo especifica)." "Without an admin user there is no safe way to lock down: phase 1 creates one (--user NAME sets it).")"
+    else
+        audit_line ok "$(ui "Usuarios humanos" "Human users")" "$humans"
+        AUDIT_SUGGEST_USER="${humans%% *}"
+    fi
+    if [[ -n "$sudo_grp" ]]; then
+        audit_line ok "sudo" "$sudo_grp"
+    else
+        audit_line bad "sudo" "$(ui "nadie esta en el grupo sudo" "nobody is in the sudo group")"
+        audit_note "$(ui "Ningún usuario puede escalar a root: si se cierra SSH y no hay sudo, no hay forma de administrar el equipo." "No user can escalate to root: if SSH gets closed and there is no sudo, the machine cannot be administered.")"
+    fi
+
+    for u in root $humans; do
+        st=$(password_state "$u")
+        keys=0
+        home=$(user_home "$u")
+        if [[ -n "$home" && -r "$home/.ssh/authorized_keys" ]]; then
+            keys=$(grep -cE '^[[:space:]]*(ssh-|ecdsa-|sk-)' "$home/.ssh/authorized_keys" 2>/dev/null) || true
+        fi
+        keys="${keys:-0}"
+        total=$((total + keys))
+        usable="sudo:no"
+        case " $sudo_grp " in *" $u "*) usable="sudo:si" ;; esac
+        if [[ "$u" == root ]]; then
+            usable="root"
+        fi
+        audit_line "$([[ "$keys" -gt 0 ]] && echo ok || echo warn)" "$u" "$usable claves:$keys pass:${st:-?}"
+        if [[ "$keys" -eq 0 ]]; then
+            audit_note "$(ui "'$u' no tiene ninguna clave autorizada: mientras esté así no se puede cerrar el login por contraseña." "'$u' has no authorized key: while that is true, password login cannot be closed.")"
+        fi
+        audit_key_perms "$u" || true
+        # Las huellas, para que cada quien reconozca la suya antes de fiarse del
+        # conteo: es lo que se compara con 'ssh-keygen -lf ~/.ssh/id_ed25519.pub'.
+        if [[ -n "$home" && -r "$home/.ssh/authorized_keys" ]]; then
+            echo "     $home/.ssh/authorized_keys"
+            ssh-keygen -lf "$home/.ssh/authorized_keys" 2>/dev/null | head -5 | sed 's/^/       /' || true
+        fi
+    done
+
+    audit_line info "$(ui "Entradas de clave totales" "Total key entries")" "$total"
+    if [[ -f /etc/sudoers.d/90-"${AUDIT_SUGGEST_USER:-none}" ]]; then
+        audit_line info "sudoers.d" "$(ui "drop-in NOPASSWD presente para $AUDIT_SUGGEST_USER" "NOPASSWD drop-in present for $AUDIT_SUGGEST_USER")"
+    fi
+}
+
+audit_section_ssh() {
+    local listening err st f pr pa pu ka au
+    audit_head 3 "SSH"
+    detect_ssh_activation
+    CURRENT_PORT=$(current_ssh_port) || true
+    CURRENT_PORT="${CURRENT_PORT:-22}"
+    listening=$(listening_ports) || true
+    if [[ "$CURRENT_PORT" == "22" ]]; then
+        audit_line warn "$(ui "Puerto que escucha" "Port listening")" "22"
+        audit_note "$(ui "SSH sigue en el 22, el puerto que escanea todo internet: sacarlo baja el ruido de los logs y los intentos de fuerza bruta." "SSH is still on 22, the port the whole internet scans: moving it cuts log noise and brute-force attempts.")"
+    else
+        audit_line ok "$(ui "Puerto que escucha" "Port listening")" "$CURRENT_PORT"
+    fi
+    audit_line info "$(ui "Puertos de sshd" "sshd ports")" "${listening:-$(ui "sshd no informa" "sshd reports nothing")}"
+    ssh_activation_summary
+
+    AUDIT_EFF=$(sshd -T 2>/dev/null) || true
+    if [[ -z "$AUDIT_EFF" ]]; then
+        err=$(sshd -T 2>&1 >/dev/null | head -2 | tr '\n' ' ') || true
+        audit_line bad "$(ui "Config efectiva" "Effective config")" "${err:-$(ui "sshd -T no responde" "sshd -T does not answer")}"
+        audit_note "$(ui "No pude leer la config efectiva de sshd: el resto de la sección SSH queda sin datos." "I could not read the effective sshd config: the rest of the SSH section has no data.")"
+        return 0
+    fi
+
+    pr=$(audit_eff_val permitrootlogin)
+    pa=$(audit_eff_val passwordauthentication)
+    pu=$(audit_eff_val pubkeyauthentication)
+    ka=$(audit_eff_val kbdinteractiveauthentication)
+    au=$(audit_eff_rest allowusers)
+    audit_expect "$pr" "no" "PermitRootLogin" bad \
+        "$(ui "root puede entrar por SSH (PermitRootLogin=$pr): es la cuenta que todo intento de adivinanza persigue." "root can log in over SSH (PermitRootLogin=$pr): the account every guessing attempt targets.")"
+    audit_expect "$pa" "no" "PasswordAuthentication" bad \
+        "$(ui "El login por contraseña sigue abierto (PasswordAuthentication=$pa) mientras que root acepte $pr." "Password login is still open (PasswordAuthentication=$pa) while root accepts $pr.")"
+    audit_expect "$pu" "yes" "PubkeyAuthentication" bad \
+        "$(ui "PubkeyAuthentication=$pu: sin claves aceptadas no se puede cerrar la contraseña sin quedarse fuera." "PubkeyAuthentication=$pu: with no keys accepted, password login cannot be closed without locking everyone out.")"
+    audit_expect "$ka" "no" "KbdInteractiveAuthentication" "" ""
+    if [[ -n "$au" ]]; then
+        audit_line ok "AllowUsers" "$au"
+    else
+        audit_line warn "AllowUsers" "$(ui "sin definir: entra cualquier usuario con clave" "not set: any user with a key gets in")"
+        audit_note "$(ui "AllowUsers vacío: cualquier cuenta con una clave instalada (incluidas las que puso un proveedor o un ex-colaborador) puede entrar." "AllowUsers empty: any account with an installed key (including ones a provider or an ex-coworker put there) can get in.")"
+    fi
+    audit_line info "MaxAuthTries" "$(audit_eff_val maxauthtries)"
+    audit_line info "MaxSessions" "$(audit_eff_val maxsessions)"
+    audit_line info "X11Forwarding" "$(audit_eff_val x11forwarding)"
+    audit_line info "ClientAliveInterval" "$(audit_eff_val clientaliveinterval)"
+
+    if st=$(sshd -t 2>&1); then
+        audit_line ok "$(ui "Sintaxis de sshd" "sshd syntax")" "OK"
+    else
+        audit_line bad "$(ui "Sintaxis de sshd" "sshd syntax")" "$(printf '%s\n' "$st" | tail -1)"
+        audit_note "$(ui "sshd -t falla: 'sshd -T' y el cierre de acceso no son fiables hasta arreglarlo." "sshd -t fails: neither sshd -T nor a lock-down is trustworthy until this is fixed.")"
+    fi
+
+    # sshd guarda el PRIMER valor que ve de cada clave: un drop-in ajeno con
+    # nombre anterior a 99-hardening gana aunque el nuestro diga lo contrario.
+    audit_dropin_scan /etc/ssh/sshd_config.d
+}
+
+# audit_dropin_scan <directorio>  (separa el glob del resto de la sección para
+# poder probarlo con un directorio de trabajo)
+audit_dropin_scan() {
+    local f
+    for f in "$1"/*.conf; do
+        [[ -f "$f" ]] || continue
+        audit_line info "$(basename "$f")" "$(grep -cvE '^[[:space:]]*(#|$)' "$f" 2>/dev/null || true) $(ui "lineas" "lines")"
+        if grep -qiE '^[[:space:]]*(PasswordAuthentication[[:space:]]+yes|KbdInteractiveAuthentication[[:space:]]+yes|PermitRootLogin[[:space:]]+(yes|without-password|prohibit-password))' "$f"; then
+            audit_note "$(ui "El drop-in $f reabre contraseña o root y sshd usa el primer valor que lee: hay que corregirlo (la fase 3 lo hace)." "The drop-in $f reopens password or root access and sshd uses the first value it reads: it must be corrected (phase 3 does it).")"
+        fi
+    done
+    return 0
+}
+
+audit_section_firewall() {
+    local tcp udp ports proto p numbered status rules def_in active mark risky risky_tcp="" risky_udp=""
+    audit_head 4 "$(ui "Cortafuegos y puertos expuestos" "Firewall and exposed ports")"
+    tcp=$(audit_listening tcp) || true
+    udp=$(audit_listening udp) || true
+    audit_line info "$(ui "TCP a la escucha" "TCP listening")" "${tcp:-$(ui "nada expuesto" "nothing exposed")}"
+    audit_line info "$(ui "UDP a la escucha" "UDP listening")" "${udp:-$(ui "nada expuesto" "nothing exposed")}"
+
+    if ! has_ufw; then
+        audit_line bad "UFW" "$(ui "no instalado" "not installed")"
+        audit_note "$(ui "Sin cortafuegos, todo puerto a la escucha responde a internet: la fase 4 instala y activa UFW con SSH permitido." "Without a firewall every listening port answers to the internet: phase 4 installs and enables UFW with SSH allowed.")"
+        return 0
+    fi
+    numbered=$(ufw status numbered 2>/dev/null) || true
+    status=$(ufw status 2>/dev/null) || true
+    active=no
+    case "$status" in *"Status: active"*) active=yes ;; esac
+    rules=$(printf '%s\n' "$numbered" | grep -cE '^[[:space:]]*\[[[:space:]]*[0-9]+\]') || true
+    def_in=$(awk -F= '/^DEFAULT_INPUT_POLICY/{print $2}' /etc/default/ufw 2>/dev/null) || true
+    if [[ "$active" == yes ]]; then
+        audit_line ok "UFW" "$(ui "activo, $rules reglas de entrada" "active, $rules inbound rules")"
+    else
+        audit_line bad "UFW" "$(ui "INACTIVO" "NOT ACTIVE")"
+        audit_note "$(ui "UFW inactivo: todo lo que escucha arriba está expuesto a internet ahora mismo." "UFW inactive: everything listed above is exposed to the internet right now.")"
+    fi
+    audit_line "$([[ -n "$def_in" ]] && echo ok || echo warn)" "DEFAULT_INPUT_POLICY" "${def_in:-?}"
+
+    # Qué puertos no tienen regla. Con UFW inactivo la lectura es "expuesto";
+    # con UFW activo la lista ya está filtrada, así que solo queda lo permitido.
+    for proto in tcp udp; do
+        ports="$tcp"
+        if [[ "$proto" == udp ]]; then ports="$udp"; fi
+        for p in $ports; do
+            if [[ "$proto" == tcp ]]; then
+                if grep -qE "[[:space:]]${p}(/tcp)?([[:space:]]|\(|$)" <<< "$numbered"; then
+                    continue
+                fi
+                risky_tcp="$risky_tcp $p"
+            else
+                if grep -qE "[[:space:]]${p}/udp([[:space:]]|\(|$)" <<< "$numbered"; then
+                    continue
+                fi
+                risky_udp="$risky_udp $p"
+            fi
+        done
+    done
+    if [[ -n "${risky_tcp// /}" || -n "${risky_udp// /}" ]]; then
+        risky="${risky_tcp} ${risky_udp}"
+        risky=$(printf '%s' "$risky" | tr -s ' ' | sed 's/^ //;s/ $//')
+        audit_line warn "$(ui "Sin regla en UFW" "Without a UFW rule")" "$risky"
+        for p in $risky_tcp; do echo "       sudo ufw allow ${p}/tcp"; done
+        for p in $risky_udp; do echo "       sudo ufw allow ${p}/udp"; done
+        audit_note "$(ui "Puertos escuchando sin regla: hoy expuestos si UFW está inactivo, y que se cortarían al activarlo. Decide uno por uno antes de activar." "Ports listening without a rule: exposed today while UFW is inactive, and cut off the moment it is enabled. Decide them one by one before enabling.")"
+    fi
+    # El puerto SSH es el único cuya regla no admite error: sin él, el cierre
+    # deja fuera al operador. La fase 4 lo abre; aquí solo se avisa.
+    if ! grep -qE "[[:space:]]${CURRENT_PORT}(/tcp)?([[:space:]]|\(|$)" <<< "$numbered"; then
+        audit_line warn "$(ui "Regla para el puerto SSH" "Rule for the SSH port")" "$(ui "no hay regla para $CURRENT_PORT" "no rule for $CURRENT_PORT")"
+        audit_note "$(ui "Al activar UFW sin abrir $CURRENT_PORT te quedas fuera del VPS. El script lo permite antes de activarlo; si lo haces a mano: sudo ufw allow $CURRENT_PORT/tcp" "Enabling UFW without allowing $CURRENT_PORT locks you out. The script permits it before enabling; by hand it is: sudo ufw allow $CURRENT_PORT/tcp")"
+    fi
+    return 0
+}
+
+audit_section_fail2ban() {
+    local act en raw ignores ips mark
+    audit_head 5 "Fail2ban"
+    if ! has_fail2ban; then
+        audit_line warn "fail2ban" "$(ui "no instalado" "not installed")"
+        audit_note "$(ui "Nada frena los intentos fallidos de login; la fase 5 lo instala y deja excluidas tus IPs actuales." "Nothing slows down failed logins; phase 5 installs it and whitelists your current IPs.")"
+        return 0
+    fi
+    act=$(systemctl is-active fail2ban 2>/dev/null) || true
+    en=$(systemctl is-enabled fail2ban 2>/dev/null) || true
+    mark=warn
+    if [[ "$act" == active ]]; then mark=ok; fi
+    audit_line "$mark" "fail2ban" "$(ui "servicio" "service") ${en:-?}/${act:-?}"
+
+    # 'fail2ban-client status' puede colgarse si el daemon está a medio arrancar
+    # (el socket existe pero no responde): timeout lo corta y el reporte sigue.
+    raw=$(timeout 15 fail2ban-client status sshd 2>/dev/null) || true
+    if [[ -n "$raw" ]]; then
+        audit_line ok "$(ui "jail sshd" "sshd jail")" "$(ui "activo" "active")"
+        printf '%s\n' "$raw" | grep -E "Currently|Total|Failures" | sed 's/^[[:space:]]*/       /' || true
+    else
+        audit_line warn "$(ui "jail sshd" "sshd jail")" "$(ui "sshd no esta en los jails" "sshd is not in the jails")"
+        if [[ "$act" == active ]]; then
+            audit_note "$(ui "fail2ban corre pero sin jail sshd: no bloquea nada. La fase 5 escribe /etc/fail2ban/jail.d/99-secure-vps.local." "fail2ban runs with no sshd jail: it blocks nothing. Phase 5 writes /etc/fail2ban/jail.d/99-secure-vps.local.")"
+        fi
+    fi
+    ignores=$(grep -E '^ignoreip' "$JAIL_LOCAL" 2>/dev/null) || true
+    ignores=$(printf '%s' "$ignores" | sed -E 's/^ignoreip[[:space:]]*//')
+    audit_line info "ignoreip" "${ignores:-$(ui "sin excluir" "nothing excluded")}"
+    ips=$(current_admin_ips)
+    if [[ "$act" == active && -z "$ignores" && -n "$ips" ]]; then
+        audit_note "$(ui "fail2ban corre sin ignoreip y tu IP actual es $ips: tres erratas de contraseña te dejan fuera hasta que venza el ban." "fail2ban runs with no ignoreip and your current IP is $ips: three mistyped passwords leave you out until the ban expires.")"
+    fi
+    return 0
+}
+
+audit_section_updates() {
+    local uu act en conf mark
+    audit_head 6 "$(ui "Parches del sistema" "System patches")"
+    # apt_pending_counts usa 'apt-get -s' (simulación): lee los índices, no los
+    # toca. Refrescarlos sería apt-get update, que sí escribe en /var/lib/apt.
+    apt_pending_counts || true
+    audit_line "$([[ ${PENDING_COUNT:-0} -eq 0 ]] && echo ok || echo warn)" \
+        "$(ui "Paquetes actualizables" "Upgradable packages")" "${PENDING_COUNT:-0}"
+    audit_line "$([[ ${PENDING_SECURITY:-0} -eq 0 ]] && echo ok || echo bad)" \
+        "$(ui "De seguridad" "Of them security")" "${PENDING_SECURITY:-0}"
+    echo "     $(ui "Contado sobre los índices que hay en disco: --audit no corre apt-get update porque eso escribe." "Counted from the indexes on disk: --audit does not run apt-get update, because that writes.")"
+    if [[ ${PENDING_SECURITY:-0} -gt 0 ]]; then
+        audit_note "$(ui "Hay $PENDING_SECURITY parches de seguridad sin aplicar. La fase 2.5 los aplica antes de cerrar el acceso, con contraseña todavía viva." "$PENDING_SECURITY security patches are not applied yet. Phase 2.5 applies them before locking down, while password access still works.")"
+    fi
+    uu=$(dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null) || true
+    if [[ "$uu" == "install ok installed" ]]; then
+        en=$(systemctl is-enabled unattended-upgrades 2>/dev/null) || true
+        act=$(systemctl is-active unattended-upgrades 2>/dev/null) || true
+        if [[ "$act" == active ]]; then mark=ok; else mark=warn; fi
+        audit_line "$mark" "unattended-upgrades" "${en:-?}/${act:-?}"
+    else
+        audit_line warn unattended-upgrades "$(ui "no instalado" "not installed")"
+        audit_note "$(ui "Nadie aplica los parches de seguridad solos: la fase 6 instala unattended-upgrades y lo deja activo." "Nothing applies security patches on its own: phase 6 installs unattended-upgrades and leaves it running.")"
+    fi
+    conf=$(tr '\n' ' ' < /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null) || true
+    audit_line info "20auto-upgrades" "${conf:-$(ui "ausente" "absent")}"
+    if [[ -f "$REBOOT_FLAG" ]]; then
+        audit_line warn "$(ui "Reinicio pendiente" "Reboot pending")" "$(ui "hace falta sudo reboot" "sudo reboot is needed")"
+        audit_note "$(ui "El kernel en ejecución sigue siendo el viejo: los parches de seguridad aplicados no hacen efecto hasta reiniciar." "The running kernel is still the old one: the security patches applied take effect only after a reboot.")"
+    fi
+    return 0
+}
+
+audit_section_tool() {
+    local count pending last f unconfirmed=0 backups
+    audit_head 7 "$(ui "Rastros de secure-vps aqui" "secure-vps traces here")"
+    if [[ -d "$SNAPSHOTS_DIR" ]]; then
+        count=$(find "$SNAPSHOTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ') || true
+        for f in "$SNAPSHOTS_DIR"/*/; do
+            [[ -d "$f" ]] || continue
+            if [[ -f "$f/READY" && ! -f "$f/CONFIRMED" && ! -f "$f/REVERTED" ]]; then
+                unconfirmed=$((unconfirmed + 1))
+            fi
+        done
+        last=$(last_snapshot)
+        audit_line info "snapshots" "$count ($(ui "sin confirmar: $unconfirmed" "unconfirmed: $unconfirmed"))"
+        audit_line info "$(ui "mas reciente" "latest")" "${last:-$(ui "ninguno" "none")}"
+        if [[ "$unconfirmed" -gt 0 ]]; then
+            audit_note "$(ui "Hay $unconfirmed snapshot(s) sin marcar CONFIRMED: fueron cambios cuya prueba de acceso no terminó de cerrarse." "$unconfirmed snapshot(s) have no CONFIRMED mark: those were changes whose access test never closed.")"
+        fi
+    else
+        audit_line info "snapshots" "$(ui "nunca se corrio el endurecido aqui" "hardening never ran here")"
+    fi
+    pending=$(list_pending_rollbacks) || true
+    if [[ -n "$pending" ]]; then
+        audit_line bad "$(ui "Cuenta atras armada" "Countdown armed")" "$pending"
+        audit_note "$(ui "Hay una cuenta atrás viva de otra corrida ($pending): si nadie la cancela, revierte los cambios. sudo systemctl stop $pending" "A countdown from another run is alive ($pending): unless somebody cancels it, it reverts the changes. sudo systemctl stop $pending")"
+    else
+        audit_line ok "$(ui "Cuenta atras armada" "Countdown armed")" "$(ui "ninguna" "none")"
+    fi
+    backups=$(ls -1 /etc/ssh/sshd_config.bak.* 2>/dev/null | tr '\n' ' ') || true
+    audit_line info "$(ui "Backups de sshd_config" "sshd_config backups")" "${backups:-$(ui "ninguno" "none")}"
+    for f in "$HARDENING_FILE" "$SOCKET_DROPIN" "$JAIL_LOCAL" "$ROLLBACK_BIN"; do
+        if [[ -e "$f" ]]; then
+            audit_line ok "$(basename "$f")" "$(ui "presente" "present")"
+        else
+            audit_line info "$(basename "$f")" "-"
+        fi
+    done
+    if [[ -f "$LOG_FILE" ]]; then
+        audit_line info "$(ui "Log de la herramienta" "Tool log")" "$(wc -l < "$LOG_FILE" | tr -d ' ') $(ui "lineas" "lines")"
+    fi
+    return 0
+}
+
+audit_findings() {
+    local who port_flag
+    audit_head 8 "$(ui "Hallazgos" "Findings")"
+    if [[ $AUDIT_N -eq 0 ]]; then
+        success "$(ui "No encontré nada que corregir: el equipo ya está cerrado razonablemente." "Nothing to fix: this machine is already reasonably closed.")"
+        return 0
+    fi
+    printf '%s' "$AUDIT_FINDINGS"
+    echo
+    echo "  $(ui "Para aplicar todo eso con la red de seguridad (snapshot + cuenta atrás + prueba de acceso real):" "To apply all of it with the safety net (snapshot + countdown + a real access test):")"
+    who="${AUDIT_SUGGEST_USER:-TUUSUARIO}"
+    port_flag=""
+    if [[ "$CURRENT_PORT" == "22" ]]; then
+        port_flag="--port 2222 "
+    fi
+    # install.sh corre el script desde un temporal que borra al salir: imprimir
+    # esa ruta daría un comando que ya no existe cuando se quiera copiar.
+    local cmd="$0"
+    case "$cmd" in /tmp/*|/var/*|/private/*) cmd="secure-vps.sh" ;; esac
+    echo -e "    ${CYAN}sudo bash $cmd ${port_flag}--user $who --pubkey-file /ruta/a/tu_clave.pub${NC}"
+    echo
+    echo "  $(ui "El reporte no tocó nada: --audit solo lee." "The report touched nothing: --audit only reads.")"
+    echo "  $(ui "Guarda el reporte para revisarlo o para pasarlo a alguien:" "Save the report to review it or to hand it to somebody:")"
+    echo -e "    ${CYAN}sudo bash $cmd --audit > auditoria.txt${NC}"
+    return 0
+}
+
+audit_report() {
+    banner
+    header "$(ui "AUDITORÍA DE SOLO LECTURA" "READ-ONLY AUDIT")"
+    echo "  $(ui "Esto no escribe nada: ni configuración, ni backups, ni snapshots, ni cuenta atrás." "This writes nothing: no configuration, no backups, no snapshots, no countdown.")"
+    echo "  $(ui "Tarda unos segundos y se puede correr las veces que haga falta." "It takes a few seconds and can be run as many times as needed.")"
+    # detect_public_ip NO se llama: sus cuatro curl a servicios externos son la
+    # única salida de red de la corrida, y un reporte pensado para guardarse y
+    # pasarse a alguien no debe generar tráfico. La dirección por la que se entró
+    # se lee del propio entorno de la sesión.
+    if [[ -z "$PUBLIC_IP" ]]; then
+        PUBLIC_IP=$(audit_session_ip)
+    fi
+    detect_session_kind
+    audit_section_system
+    audit_section_users
+    audit_section_ssh
+    audit_section_firewall
+    audit_section_fail2ban
+    audit_section_updates
+    audit_section_tool
+    audit_findings
+    return 0
+}
+
+# ============================================================
 # MENÚ PRINCIPAL
 # ============================================================
 # Solo cuentas atrás que AÚN van a disparar (--state=active): al cumplir, el
@@ -2417,6 +2911,7 @@ main_menu() {
   9) $(ui "Ver resumen del estado actual" "Show the current state summary")
  10) $(ui "Cancelar cuenta atrás pendiente" "Cancel a pending countdown")
  11) $(ui "Revertir al último snapshot" "Revert to the latest snapshot")
+ 12) $(ui "Auditar el estado sin tocar nada" "Audit the state without touching anything")
   0) $(ui "Salir" "Exit")
 EOF
         echo
@@ -2441,6 +2936,7 @@ EOF
             9) final_summary; pause ;;
             10) cancel_all_rollbacks; pause ;;
             11) restore_last_snapshot; pause ;;
+            12) audit_report; pause ;;
             0) echo "$(ui "Saliendo..." "Exiting...")"; exit 0 ;;
             *) warn "$(ui "Opción no válida." "Invalid option.")"; sleep 1 ;;
         esac
@@ -2469,6 +2965,12 @@ main() {
     check_os || exit 1
     require_root
     check_dependencies || exit 1
+    # Antes de cualquier paso que escriba: ni backup, ni STATE_DIR, ni flock, ni
+    # cuenta atrás pendiente, ni /run/sshd. El reporte no necesita nada de eso.
+    if [[ $AUDIT_MODE -eq 1 ]]; then
+        audit_report
+        exit 0
+    fi
     check_original_user
     detect_session_kind
     resolve_guided_mode

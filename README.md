@@ -11,7 +11,7 @@
  ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
  █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
  ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
- ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╝ ██║  ██╗██║  ██║
+ ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╔╝ ██║  ██╗██║  ██║
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
 ```
 
@@ -38,7 +38,7 @@ ready for the SSH access test.
 
 The one-liner launches the guided assistant directly. If you prefer to choose
 individual phases, or to inspect the current state without making changes, download
-the script and run it without arguments — the menu provides all 11 actions:
+the script and run it without arguments — the menu provides all 12 actions:
 
 ```bash
 curl -fsSL -o secure-vps.sh \
@@ -46,6 +46,13 @@ curl -fsSL -o secure-vps.sh \
 
 less secure-vps.sh
 sudo bash secure-vps.sh
+```
+Want the diagnosis before anything changes? `--audit` is read-only: who can log in,
+what `sshd` actually accepts, which ports are exposed, what is still missing. It writes no
+file and makes no outbound request.
+
+```bash
+sudo bash secure-vps.sh --audit > audit.txt
 ```
 
 ## What it does
@@ -105,7 +112,7 @@ ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 
 - It does not pipe the main script into `bash`. The script needs interactive input, so it is downloaded and verified first.
 - Reverting restores the SSH, UFW and fail2ban configuration. It does **not** undo package updates, and it does **not** remove the public key the tool installed.
-- It is not a security audit. If the server is already compromised, treat it as compromised: hardening it afterwards does not establish trust.
+- `--audit` reports the configuration as it stands. It is not a security audit: if the server is already compromised, treat it as compromised — hardening it afterwards does not establish trust.
 - It never generates a key pair on the server. The private half should never exist there.
 
 ## Automation
@@ -121,6 +128,7 @@ sudo bash secure-vps.sh --help
 | `--allow-lockdown` | Locks down without the human confirmation. Understand the recovery implications first. |
 | `--upgrade` / `--no-upgrade` | Apply, or only report, pending package updates. |
 | `--lang es\|en` | Override the detected language. |
+| `--audit` | Read-only state report: what is open, what is exposed, what to run next. |
 
 > Automated lockdown can leave you without SSH access if the resulting configuration is wrong.
 
@@ -128,11 +136,11 @@ sudo bash secure-vps.sh --help
 
 The suite runs the script against real systemd inside containers, on Ubuntu 22.04 and
 24.04. It covers lockdown and rollback, the access countdown firing for real, port
-changes and conflicts, byte-exact idempotency, the guided first-run flow, UDP warnings
-and recovery through the menu.
+changes and conflicts, byte-exact idempotency, the guided first-run flow, UDP warnings,
+recovery through the menu, and the read-only mode leaving no trace on disk.
 
-- **18** end-to-end scenarios
-- **134** unit assertions
+- **19** end-to-end scenarios
+- **213** unit assertions
 - **9** installer assertions, including refusing a tampered file and a foreign signature
 
 ```bash

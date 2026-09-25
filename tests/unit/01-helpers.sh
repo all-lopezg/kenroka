@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Unit 01: argumentos, validación de clave pública y borrado de reglas UFW.
-set -uo pipefail
+# --audit promete no escribir nada: exige que la carga de funciones falle ruidosa
+# (set -u) en vez de tragar un 'readonly: readonly variable' como hacía antes.
+set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
