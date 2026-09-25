@@ -1,0 +1,41 @@
+# Servidor de pruebas: Ubuntu con systemd real, porque lo que se quiere
+# validar es precisamente ssh.socket, systemd-run y el backend journald de
+# fail2ban -- cosas que no existen sin un systemd funcionando.
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    container=docker
+
+# Sin --no-install-recommends: así los deps reflejan un `apt install fail2ban`
+# de verdad en un VPS (p.ej. python3-systemd, que necesita el backend systemd).
+RUN apt-get update \
+ && apt-get install -y --assume-yes \
+      openssh-server openssh-client ufw fail2ban sudo \
+      iproute2 procps curl ca-certificates socat \
+      systemd systemd-sysv dbus kmod unattended-upgrades apt-listchanges \
+ && rm -rf /var/lib/apt/lists/*
+
+# Unidades que no aportan nada dentro de un contenedor y ensucian el arranque.
+# systemd-logind se queda activo a propósito: 'who' tiene que mostrar las
+# sesiones SSH para que detect_admin_ips() funcione como en un VPS real.
+RUN for u in systemd-udevd.service systemd-udevd-kernel.socket \
+             systemd-udevd-control.socket systemd-modules-load.service \
+             systemd-resolved.service getty@tty1.service console-getty.service \
+             systemd-networkd-wait-online.service; do \
+        ln -sf /dev/null "/etc/systemd/system/$u"; \
+    done
+
+# El script espera /var/log/auth.log o journald; que no haya ambigüedad.
+RUN rm -f /var/log/auth.log /var/log/syslog
+
+# Estado "VPS recién entregado": root con clave y PasswordAuthentication yes
+# via cloud-init, igual que una imagen cloud real.
+COPY seed.sh /usr/local/lib/kenroka-seed.sh
+RUN chmod 755 /usr/local/lib/kenroka-seed.sh
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
+
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

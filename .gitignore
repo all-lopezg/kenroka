@@ -1,0 +1,6 @@
+# Material efímero de las pruebas: claves SSH del par administrador y logs.
+tests/docker/.work/
+
+# Artefactos de release generados por tools/make-release.sh
+/SHA256SUMS.txt
+/SHA256SUMS.txt.sig

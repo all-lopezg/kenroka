@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# sshpass: el cliente de SSH lee la contraseña de /dev/tty, no de stdin, así
+# que sin esto no se puede probar que la contraseña deja de abrir SSH.
+RUN apt-get update \
+ && apt-get install -y --assume-yes openssh-client iproute2 sshpass \
+ && rm -rf /var/lib/apt/lists/*
+
+CMD ["sleep", "infinity"]
