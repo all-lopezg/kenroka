@@ -1,127 +1,139 @@
+# secure-vps
+
 <div align="center">
+
+**Endurece un VPS Ubuntu sin dejarte fuera.**
+
+**[ :gb: English ](README.md)** &nbsp;·&nbsp; :es: Español
 
 ```
  ██╗  ██╗███████╗███╗   ██╗██████╗  ██████╗  ██╗  ██╗ █████╗
  ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
  █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
  ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
- ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╔╝ ██║  ██╗██║  ██║
+ ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╝ ██║  ██╗██║  ██║
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
 ```
 
-**Endurece un VPS Ubuntu sin dejarte fuera.**
-
-[English](README.md) · **Español**
-
 </div>
 
----
-
-Compraste un VPS. Esto cierra las puertas que vienen abiertas por defecto —el
-acceso por contraseña, el root, un cortafuegos sin reglas, sin fail2ban y sin
-actualizaciones— y se niega a cerrar ninguna hasta tener prueba de que sigues
-pudiendo entrar.
-
-## Instalación
+## Inicio rápido
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 ```
 
-La URL no lleva versión: baja siempre la última release publicada. `install.sh`
-descarga el script, verifica la firma de su checksum contra la clave del
-mantenedor, te dice qué versión resolvió y solo entonces lo ejecuta —con tu
-terminal conectada, porque el asistente te va preguntando cosas.
+La URL no lleva versión a propósito: siempre resuelve la última release publicada.
+El instalador verifica la firma de la release y te dice qué versión bajó antes de
+ejecutar nada.
 
-¿Prefieres leerlo antes de correrlo?
+Para fijar una versión concreta:
 
 ```bash
-curl -fsSL -o secure-vps.sh https://github.com/all-lopezg/kenroka/releases/latest/download/secure-vps.sh
-less secure-vps.sh
-sudo bash secure-vps.sh        # abre un menú con cada fase suelta
+KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 ```
 
-## Por qué no te va a dejar fuera
+Antes de empezar: ten abierta la consola web de tu proveedor y prepara una segunda
+terminal para la prueba de acceso SSH.
 
-- **Tu clave se verifica, no se da por hecha.** Instala la pública, comprueba que
-  `sshd` la acepta y corrige los permisos de `StrictModes` que suelen hacer que una
-  clave correcta se ignore en silencio.
-- **Nada se cierra hasta que confirmes desde una segunda sesión.** Imprime el
-  comando `ssh` exacto; lo corres en otra ventana y escribes `acceso-ok`. Cualquier
-  otra cosa revierte al instante.
-- **Hay una cuenta atrás corriendo mientras pruebas.** Si te vas, o si la
-  confirmación nunca llega, SSH, UFW y fail2ban vuelven atrás solos en 10 minutos.
-- **Cada cambio deja un snapshot**, y el menú permite revertir al último.
-- **Desde la consola web del proveedor no cierra el acceso.** Desde ahí no hay
-  forma de probar una conexión SSH nueva, así que aplica todo menos el cierre y te
-  dice qué correr después.
+El one-liner lanza directo el asistente guiado. Si prefieres elegir fases sueltas, o
+ver el estado sin cambiar nada, descarga el script y corrélo sin argumentos: el menú
+ofrece las 11 acciones.
+
+```bash
+curl -fsSL -o secure-vps.sh \
+  https://github.com/all-lopezg/kenroka/releases/latest/download/secure-vps.sh
+
+less secure-vps.sh
+sudo bash secure-vps.sh
+```
 
 ## Qué hace
 
-1. Crea un usuario administrador con sudo que sí funciona (contraseña o NOPASSWD).
-2. Instala y verifica tu clave pública SSH.
-3. Reporta las actualizaciones pendientes y las aplica **antes** de cerrar el acceso.
-4. Aplica límites de SSH (`MaxAuthTries`, `MaxSessions`, `ClientAliveInterval`…).
-5. Desactiva el login de root y la autenticación por contraseña.
-6. Activa UFW enseñando antes qué puertos TCP **y UDP** dejaría filtrados.
-7. Configura fail2ban con la IP de tus sesiones abiertas excluida del bloqueo.
-8. Activa las actualizaciones automáticas y recomienda sacar SSH del puerto 22.
+- Crea un usuario administrador con sudo que sí funciona, con contraseña o NOPASSWD.
+- Instala tu clave pública SSH y verifica que `sshd` la acepta, permisos incluidos.
+- Revisa las actualizaciones de paquetes pendientes antes de hacer cambios que restrinjan el acceso.
+- Aplica límites de SSH como `MaxAuthTries`, `MaxSessions` y `ClientAlive`.
+- Desactiva el login de root y la autenticación por contraseña.
+- Muestra qué puertos TCP **y UDP** quedarían filtrados antes de activar UFW.
+- Configura fail2ban y excluye de los bloqueos tu IP actual.
+- Activa las actualizaciones automáticas de seguridad.
+- Ofrece sacar SSH del puerto 22.
+- Verifica la configuración efectiva de SSH antes del cierre definitivo.
 
-Es idempotente: si lo corres dos veces, te dice qué encontró ya hecho.
+## La red de seguridad
+
+La regla importante es simple:
+
+> No cerrar el acceso SSH sin haber comprobado antes que la configuración nueva funciona.
+
+- Antes de restringir el acceso, `secure-vps` comprueba la configuración efectiva de `sshd`.
+- Al empezar el cierre arranca una cuenta atrás: 10 minutos por defecto. Durante esa ventana:
+  1. Abre una sesión SSH nueva desde otra terminal.
+  2. Comprueba que puedes entrar con normalidad.
+  3. Vuelve a la sesión original.
+  4. Confirma el acceso nuevo escribiendo `acceso-ok`.
+- Si la confirmación no llega antes de que expire la cuenta atrás, los cambios se revierten solos.
+- Cada cambio deja un snapshot, y el menú tiene una opción para restaurar el último.
+
+`acceso-ok` es el token literal en los dos idiomas: nunca se traduce, así que las
+instrucciones siempre piden la misma palabra.
 
 ## Requisitos
 
-Ubuntu **22.04** o **24.04** · root o `sudo` · una segunda terminal en tu
-computadora para la prueba de acceso · la consola web de tu proveedor abierta como
-respaldo. Otras versiones de Ubuntu continúan con aviso explícito; otras
-distribuciones no están soportadas.
+- Ubuntu **22.04** o **24.04**. Otras versiones de Ubuntu se detectan y se avisa, pero no están cubiertas por la suite de pruebas.
+- Acceso root o un `sudo` que funcione.
+- Una segunda terminal para probar el acceso SSH.
+- Recomendado encarecidamente tener disponible la consola web / de recuperación de tu proveedor.
 
-## Opciones que importan
+## Verifica la clave de firma
 
-| | |
-|---|---|
-| `--user NOMBRE` | usuario administrador a crear o usar. Sin valor por defecto. |
-| `--pubkey-file RUTA` | tu clave pública. Evita que aparezca en `ps`. |
-| `--run-all` | corrida guiada, fase por fase. Es lo que hace el instalador. |
-| `--skip-lockdown` | todo menos cerrar el acceso. |
-| `--allow-lockdown` | cierra el acceso sin la prueba humana. Puedes quedarte fuera. |
-| `--non-interactive` | para Ansible/CI; exige `--user`, `--pubkey-file`, `--sudo`. |
-| `--upgrade` / `--no-upgrade` | aplicar, o solo reportar, lo pendiente. |
-| `--lang es\|en` | fuerza el idioma detectado. |
-
-`--help` lista todo.
-
-## Lo que no hace
-
-No sustituye a guardar bien tu clave privada, no es una auditoría y no rescata una
-máquina ya comprometida. Revertir deshace SSH, UFW y fail2ban; **no** deshace las
-actualizaciones de paquetes ni borra la clave pública que instaló. Nunca genera un
-par de claves en el servidor: la parte privada no debería existir ahí.
-
-## Verifica lo que bajaste
-
-`install.sh` lleva embebida esta clave de firma. Contrasta su huella por un canal
-distinto al de la descarga:
+`install.sh` lleva embebida una clave pública `ssh-ed25519` con la que se verifican las releases. Su huella:
 
 ```
 256  SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg  kenroka-release (ED25519)
 ```
 
+No te fíes solo de la copia descargada de la huella: contrástala por un canal
+independiente antes de fiarte de la verificación. Si firmas tú las releases:
+
 ```bash
-ssh-keygen -Y verify -f allowed_signers -I all-lopezg -n file \
-    -s SHA256SUMS.txt.sig < SHA256SUMS.txt
+ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 ```
+
+## Lo que no hace
+
+- No pipea el script principal en `bash`. El script necesita entrada interactiva, así que primero se descarga y se verifica.
+- Revertir restaura la configuración de SSH, UFW y fail2ban. **No** deshace las actualizaciones de paquetes ni borra la clave pública que instaló.
+- No es una auditoría de seguridad. Si el servidor ya está comprometido, trátalo como comprometido: endurecerlo después no establece confianza.
+- Nunca genera un par de claves en el servidor. La parte privada no debería existir ahí.
+
+## Automatización
+
+```bash
+sudo bash secure-vps.sh --help
+```
+
+| Opción | Significado |
+|---|---|
+| `--non-interactive` | Para Ansible o CI. Exige `--user`, `--pubkey-file` y `--sudo`. |
+| `--skip-lockdown` | Prepara el servidor sin el cierre de acceso definitivo. |
+| `--allow-lockdown` | Cierra el acceso sin la confirmación humana. Úsalo entendiendo las implicaciones de recuperación. |
+| `--upgrade` / `--no-upgrade` | Aplicar, o solo reportar, las actualizaciones pendientes. |
+| `--lang es\|en` | Fuerza el idioma detectado. |
+
+> El cierre automatizado puede dejarte sin acceso SSH si la configuración resultante es incorrecta.
 
 ## Pruebas
 
-Lo de arriba no es una promesa, es lo que comprueba la suite:
+La suite corre el script contra systemd real en contenedor, en Ubuntu 22.04 y 24.04.
+Cubre el cierre y el rollback, la cuenta atrás disparando de verdad, el cambio de
+puerto y sus conflictos, la idempotencia byte a byte, el flujo guiado de primera
+vez, el aviso de puertos UDP y el rescate desde el menú.
 
-- **18 escenarios end-to-end** contra systemd real en contenedor, en Ubuntu 24.04
-  y 22.04: cierre de acceso, la cuenta atrás disparando de verdad, cambio de puerto
-  y conflictos, idempotencia y rollback byte a byte, los flujos de novato, el aviso
-  de puertos UDP y el rescate desde el menú.
-- **134 asertos unitarios** sobre la lógica pura y **9** sobre el instalador,
-  incluido que rechaza un archivo manipulado y una firma de otra mano.
+- **18** escenarios end-to-end
+- **134** asertos unitarios
+- **9** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash
 ./tests/run.sh unit
@@ -131,4 +143,4 @@ Lo de arriba no es una promesa, es lo que comprueba la suite:
 
 ## Licencia
 
-Pendiente de elegir. Hasta entonces, todos los derechos reservados.
+Pendiente de elegir. Hasta que se publique una licencia explícita, todos los derechos reservados.

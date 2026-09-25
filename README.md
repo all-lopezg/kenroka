@@ -1,127 +1,139 @@
+# secure-vps
+
 <div align="center">
+
+**Harden an Ubuntu VPS without locking yourself out.**
+
+:gb: English &nbsp;·&nbsp; **[ :es: Español ](README.es.md)**
 
 ```
  ██╗  ██╗███████╗███╗   ██╗██████╗  ██████╗  ██╗  ██╗ █████╗
  ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
  █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
  ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
- ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╔╝ ██║  ██╗██║  ██║
+ ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╝ ██║  ██╗██║  ██║
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
 ```
 
-**Hardens an Ubuntu VPS without locking you out.**
-
-English · **[Español](README.es.md)**
-
 </div>
 
----
-
-You bought a VPS. This closes the doors that are open by default — password
-login, root, an unfiltered firewall, no fail2ban, no security updates — and it
-refuses to close any of them until it has proof you can still get in.
-
-## Install
+## Quickstart
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 ```
 
-The URL carries no version: it always fetches the latest published release.
-`install.sh` downloads the script, verifies the signature of its checksum
-against the maintainer key, prints the version it resolved, and only then runs
-it — with your terminal attached, because the assistant asks you things.
+The URL is intentionally unversioned: it always resolves to the latest published
+release. The installer verifies the release signature and tells you which version it
+resolved before running anything.
 
-Prefer to read before running?
+To pin a specific version:
 
 ```bash
-curl -fsSL -o secure-vps.sh https://github.com/all-lopezg/kenroka/releases/latest/download/secure-vps.sh
-less secure-vps.sh
-sudo bash secure-vps.sh        # opens a menu of individual phases
+KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 ```
 
-## Why it won't lock you out
+Before you start: keep your provider's web console open, and have a second terminal
+ready for the SSH access test.
 
-- **Your key is verified, not assumed.** It installs the public key, checks
-  `sshd` accepts it, and fixes the `StrictModes` permissions that usually make a
-  working key silently ignored.
-- **Nothing closes until you confirm from a second session.** It prints the exact
-  `ssh` command; you run it elsewhere and type `acceso-ok`. Anything else reverts
-  immediately.
-- **A countdown runs while you test.** If you walk away or the test never comes,
-  SSH, UFW and fail2ban revert on their own after 10 minutes.
-- **Every change leaves a snapshot**, and the menu can revert to the latest one.
-- **On a provider web console it will not lock down.** There is no way to test a
-  new SSH connection from there, so it applies everything except the lockdown and
-  tells you what to run later.
+The one-liner launches the guided assistant directly. If you prefer to choose
+individual phases, or to inspect the current state without making changes, download
+the script and run it without arguments — the menu provides all 11 actions:
+
+```bash
+curl -fsSL -o secure-vps.sh \
+  https://github.com/all-lopezg/kenroka/releases/latest/download/secure-vps.sh
+
+less secure-vps.sh
+sudo bash secure-vps.sh
+```
 
 ## What it does
 
-1. Creates an admin user with sudo that actually works (password or NOPASSWD).
-2. Installs and verifies your SSH public key.
-3. Reports pending package updates and applies them **before** closing access.
-4. Applies SSH limits (`MaxAuthTries`, `MaxSessions`, `ClientAliveInterval`…).
-5. Disables root login and password authentication.
-6. Enables UFW, listing the TCP **and UDP** ports it would filter first.
-7. Sets up fail2ban with the IP of your live sessions excluded.
-8. Turns on unattended security updates, and recommends moving SSH off port 22.
+- Creates a working administrative user with sudo, using either a password or NOPASSWD.
+- Installs your SSH public key and verifies that `sshd` accepts it, including file permissions.
+- Checks for pending package updates before making access-restricting changes.
+- Applies SSH security limits such as `MaxAuthTries`, `MaxSessions` and `ClientAlive`.
+- Disables root login and password authentication.
+- Shows which TCP **and UDP** ports would be filtered before enabling UFW.
+- Configures fail2ban and excludes your current IP from bans.
+- Enables automatic security updates.
+- Offers to move SSH away from port 22.
+- Verifies the effective SSH configuration before applying the final lockdown.
 
-It is idempotent: run it twice and it reports what is already in place.
+## The safety net
+
+The most important rule is simple:
+
+> Never lock down SSH without first verifying that the new configuration works.
+
+- Before restricting access, `secure-vps` checks the effective `sshd` configuration.
+- Once lockdown begins, a countdown starts — 10 minutes by default. During that window:
+  1. Open a new SSH session from another terminal.
+  2. Verify that you can log in normally.
+  3. Return to the original session.
+  4. Confirm the new access by typing `acceso-ok`.
+- If the confirmation never arrives before the countdown expires, the changes are reverted automatically.
+- Every change creates a snapshot, and the menu includes an option to restore the latest one.
+
+`acceso-ok` is the literal token in both languages: it is never translated, so the
+instructions always ask for the same word.
 
 ## Requirements
 
-Ubuntu **22.04** or **24.04** · root or `sudo` · a second terminal on your own
-computer for the access test · your provider's web console open as a fallback.
-Other Ubuntu releases continue with an explicit warning; other distributions are
-not supported.
+- Ubuntu **22.04** or **24.04**. Other Ubuntu versions are detected and reported, but are not covered by the test suite.
+- Root access or working `sudo`.
+- A second terminal for testing SSH access.
+- Keeping your provider's recovery / web console available is strongly recommended.
 
-## Flags that matter
+## Verify the signing key
 
-| | |
-|---|---|
-| `--user NAME` | admin user to create or use. No default. |
-| `--pubkey-file PATH` | your public key. Keeps it out of `ps`. |
-| `--run-all` | guided run, phase by phase. This is what the installer does. |
-| `--skip-lockdown` | everything except closing access. |
-| `--allow-lockdown` | close access without the human test. You can lose SSH. |
-| `--non-interactive` | for Ansible/CI; requires `--user`, `--pubkey-file`, `--sudo`. |
-| `--upgrade` / `--no-upgrade` | apply, or only report, pending updates. |
-| `--lang es\|en` | override the detected language. |
-
-`--help` lists everything.
-
-## What it does not do
-
-It is not a substitute for keeping your private key safe, not an audit, and not a
-rescue for a machine that is already compromised. Reverting undoes SSH, UFW and
-fail2ban; it does not undo package updates, and it does not remove the public key
-it installed. It never generates a key pair on the server — the private half
-should never exist there.
-
-## Verify what you downloaded
-
-`install.sh` embeds this signing key; check its fingerprint through a channel
-other than the download:
+`install.sh` contains an embedded `ssh-ed25519` public key used to verify releases. Its fingerprint is:
 
 ```
 256  SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg  kenroka-release (ED25519)
 ```
 
+Do not rely solely on the downloaded copy of the fingerprint: compare it through an
+independent channel before trusting the verification. If you sign releases yourself:
+
 ```bash
-ssh-keygen -Y verify -f allowed_signers -I all-lopezg -n file \
-    -s SHA256SUMS.txt.sig < SHA256SUMS.txt
+ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 ```
 
-## Tests
+## What it does not do
 
-The behaviour above is not a claim, it is what the suite checks:
+- It does not pipe the main script into `bash`. The script needs interactive input, so it is downloaded and verified first.
+- Reverting restores the SSH, UFW and fail2ban configuration. It does **not** undo package updates, and it does **not** remove the public key the tool installed.
+- It is not a security audit. If the server is already compromised, treat it as compromised: hardening it afterwards does not establish trust.
+- It never generates a key pair on the server. The private half should never exist there.
 
-- **18 end-to-end scenarios** against real systemd in containers, on Ubuntu 24.04
-  and 22.04: lockdown, the countdown firing for real, port changes and conflicts,
-  byte-exact idempotency and rollback, the novice flows, UDP warnings, and rescue
-  through the menu.
-- **134 unit assertions** on the pure logic, and **9** on the installer, including
-  that a tampered file and a foreign signature are both refused.
+## Automation
+
+```bash
+sudo bash secure-vps.sh --help
+```
+
+| Option | Meaning |
+|---|---|
+| `--non-interactive` | For Ansible or CI. Requires `--user`, `--pubkey-file` and `--sudo`. |
+| `--skip-lockdown` | Prepares the server without the final access lockdown. |
+| `--allow-lockdown` | Locks down without the human confirmation. Understand the recovery implications first. |
+| `--upgrade` / `--no-upgrade` | Apply, or only report, pending package updates. |
+| `--lang es\|en` | Override the detected language. |
+
+> Automated lockdown can leave you without SSH access if the resulting configuration is wrong.
+
+## Testing
+
+The suite runs the script against real systemd inside containers, on Ubuntu 22.04 and
+24.04. It covers lockdown and rollback, the access countdown firing for real, port
+changes and conflicts, byte-exact idempotency, the guided first-run flow, UDP warnings
+and recovery through the menu.
+
+- **18** end-to-end scenarios
+- **134** unit assertions
+- **9** installer assertions, including refusing a tampered file and a foreign signature
 
 ```bash
 ./tests/run.sh unit
@@ -131,4 +143,4 @@ The behaviour above is not a claim, it is what the suite checks:
 
 ## License
 
-To be chosen. Until then, all rights reserved.
+To be chosen. Until a license is explicitly published, all rights are reserved.
