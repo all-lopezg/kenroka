@@ -7,7 +7,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 #
 # Para quedarse en una versión concreta (una flota, un entorno que no cambia):
-#   KENROKA_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
+#   KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 #
 # Por qué existe este archivo en vez de apuntar el curl directamente al script:
 # con `curl | bash` el stdin del proceso es la tubería, así que cualquier `read`
@@ -83,8 +83,14 @@ fi
 say ""
 say "Versión resuelta: ${RESOLVED}. Para congelarla en una flota, repite con KENROKA_VERSION=v${RESOLVED}."
 say "Contenido verificado. Arranco el asistente; sigue las instrucciones en pantalla."
-say "(Si prefieres leer el script antes: less ${WORK}/secure-vps.sh — cópialo primero con cp.)"
 say ""
+
+# Sin argumentos, quien llega por el one-liner va directo al asistente guiado.
+# El menú por fases sigue disponible corriendo el script a mano:
+#   sudo bash secure-vps.sh
+if [[ $# -eq 0 ]]; then
+    set -- --run-all
+fi
 
 bash "${WORK}/secure-vps.sh" "$@" < /dev/tty
 rc=$?

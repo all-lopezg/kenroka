@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.0.0
+# Versión: 1.0.1
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.0.1"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -934,9 +934,25 @@ ufw_purge_port() {
 # ============================================================
 # FASE 0: BIENVENIDA
 # ============================================================
+# El nombre en ASCII: adorno, pero es lo que hace que la pantalla parezca un
+# programa y no un script. Solo en la bienvenida y en el menú.
+banner() {
+    printf '%s' "${BOLD}${CYAN}"
+    cat <<'BANNER'
+ ██╗  ██╗███████╗███╗   ██╗██████╗  ██████╗  ██╗  ██╗ █████╗
+ ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
+ █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
+ ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
+ ██║  ██╗███████╗██║ ╚████║██║  ██║╚██████╔╝ ██║  ██╗██║  ██║
+ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
+BANNER
+    printf '%s\n' "${NC}   secure-vps v$SCRIPT_VERSION"
+    echo
+}
+
 fase_0_welcome() {
     clear 2>/dev/null || true
-    header "SECURE-VPS v$SCRIPT_VERSION"
+    banner
 if [[ $UI_LANG == es ]]; then
 cat <<EOF
 IP pública detectada: ${BOLD}${PUBLIC_IP}${NC}
@@ -2383,7 +2399,7 @@ main_menu() {
     local option
     while true; do
         clear 2>/dev/null || true
-        header "$(ui "SECURE-VPS v$SCRIPT_VERSION - MENÚ" "SECURE-VPS v$SCRIPT_VERSION - MENU")"
+        banner
         cat <<EOF
   $(ui "IP pública:" "Public IP:")   ${PUBLIC_IP}
   $(ui "Usuario:" "User:")      ${USERNAME:-$(ui "<sin definir>" "<undefined>")}

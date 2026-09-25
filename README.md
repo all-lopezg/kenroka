@@ -22,13 +22,21 @@ curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh 
 
 **ES ·** La URL no lleva versión: se baja siempre la última release publicada, y el
 instalador te dice qué versión resolvió y que su firma es válida. Para congelar una
-flota en una versión, añade `KENROKA_VERSION=v1.0.0` antes del `curl`.
+flota en una versión, añade `KENROKA_VERSION=vX.Y.Z` antes del `curl`.
 Necesitas una terminal interactiva (el asistente te va pidiendo cosas) y conviene
 tener abierta la consola web de tu proveedor en el navegador.
 
+**ES ·** Ese one-liner entra **directo al asistente guiado**, fase por fase. Si
+prefieres elegir tú qué fase correr, o ver el estado sin cambiar nada, baja el
+script y córrelo sin argumentos: abre un menú con las 11 opciones.
+
+**EN ·** That one-liner goes **straight to the guided assistant**, phase by phase.
+To pick individual phases, or to see the state without changing anything, download
+the script and run it with no arguments: it opens a menu with the 11 options.
+
 **EN ·** The URL carries no version: it always fetches the latest published release,
 and the installer tells you which version it resolved and that the signature is
-valid. To pin a fleet, prefix `KENROKA_VERSION=v1.0.0`. You need an interactive
+valid. To pin a fleet, prefix `KENROKA_VERSION=vX.Y.Z`. You need an interactive
 terminal (the assistant asks you things) and it helps to have your provider's web
 console open in the browser.
 
