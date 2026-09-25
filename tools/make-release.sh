@@ -45,4 +45,5 @@ echo "Publícalos con:"
 echo "  gh release create $VERSION secure-vps.sh SHA256SUMS.txt SHA256SUMS.txt.sig \\ "
 echo "      --title \"secure-vps $VERSION\" --notes-file NOTAS.md"
 echo
-echo "Y actualiza en install.sh la línea VERSION=\"...\" a $VERSION antes de subir el tag."
+echo "install.sh no se toca: su URL apunta a releases/latest, que moverá el tag nuevo."
+echo "Para congelar una flota en esta versión: KENROKA_VERSION=$VERSION curl -fsSL .../install.sh | bash"
