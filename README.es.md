@@ -62,6 +62,7 @@ sudo bash secure-vps.sh --audit > auditoria.txt
 - Revisa las actualizaciones de paquetes pendientes antes de hacer cambios que restrinjan el acceso.
 - Aplica límites de SSH como `MaxAuthTries`, `MaxSessions` y `ClientAlive`.
 - Desactiva el login de root y la autenticación por contraseña.
+- Al cerrar SSH, limita el acceso al usuario administrador elegido (`AllowUsers`); las demás cuentas ya no podrán entrar por SSH.
 - Muestra qué puertos TCP **y UDP** quedarían filtrados antes de activar UFW.
 - Configura fail2ban y excluye de los bloqueos tu IP actual.
 - Activa las actualizaciones automáticas de seguridad.
@@ -81,7 +82,7 @@ La regla importante es simple:
   3. Vuelve a la sesión original.
   4. Confirma el acceso nuevo escribiendo `acceso-ok`.
 - Si la confirmación no llega antes de que expire la cuenta atrás, los cambios se revierten solos.
-- Cada cambio deja un snapshot, y el menú tiene una opción para restaurar el último.
+- Los cambios de SSH, UFW y Fail2ban dejan snapshots; el menú restaura el más reciente que aún no se haya revertido.
 
 `acceso-ok` es el token literal en los dos idiomas: nunca se traduce, así que las
 instrucciones siempre piden la misma palabra.
@@ -111,7 +112,7 @@ ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 ## Lo que no hace
 
 - No pipea el script principal en `bash`. El script necesita entrada interactiva, así que primero se descarga y se verifica.
-- Revertir restaura la configuración de SSH, UFW y fail2ban. **No** deshace las actualizaciones de paquetes ni borra la clave pública que instaló.
+- Revertir restaura la configuración de SSH, UFW y fail2ban. **No** deshace las actualizaciones de paquetes ni la creación de cuentas o cambios de contraseña, grupos y `sudoers`; tampoco elimina la clave pública instalada.
 - `--audit` reporta la configuración tal como está. No es una auditoría de seguridad: si el servidor ya está comprometido, trátalo como comprometido — endurecerlo después no establece confianza.
 - Nunca genera un par de claves en el servidor. La parte privada no debería existir ahí.
 

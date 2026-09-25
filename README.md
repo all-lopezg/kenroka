@@ -62,6 +62,7 @@ sudo bash secure-vps.sh --audit > audit.txt
 - Checks for pending package updates before making access-restricting changes.
 - Applies SSH security limits such as `MaxAuthTries`, `MaxSessions` and `ClientAlive`.
 - Disables root login and password authentication.
+- When locking down SSH, restricts access to the selected admin user with `AllowUsers`; other accounts can no longer log in over SSH.
 - Shows which TCP **and UDP** ports would be filtered before enabling UFW.
 - Configures fail2ban and excludes your current IP from bans.
 - Enables automatic security updates.
@@ -81,7 +82,7 @@ The most important rule is simple:
   3. Return to the original session.
   4. Confirm the new access by typing `acceso-ok`.
 - If the confirmation never arrives before the countdown expires, the changes are reverted automatically.
-- Every change creates a snapshot, and the menu includes an option to restore the latest one.
+- SSH, UFW and fail2ban changes create snapshots; the menu restores the latest one that has not already been reverted.
 
 `acceso-ok` is the literal token in both languages: it is never translated, so the
 instructions always ask for the same word.
@@ -111,7 +112,7 @@ ssh-keygen -lf ~/.ssh/kenroka_sign.pub
 ## What it does not do
 
 - It does not pipe the main script into `bash`. The script needs interactive input, so it is downloaded and verified first.
-- Reverting restores the SSH, UFW and fail2ban configuration. It does **not** undo package updates, and it does **not** remove the public key the tool installed.
+- Reverting restores the SSH, UFW and fail2ban configuration. It does **not** undo package updates or account creation, password, group or sudoers changes, and it does **not** remove the installed public key.
 - `--audit` reports the configuration as it stands. It is not a security audit: if the server is already compromised, treat it as compromised — hardening it afterwards does not establish trust.
 - It never generates a key pair on the server. The private half should never exist there.
 

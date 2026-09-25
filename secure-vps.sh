@@ -722,7 +722,7 @@ exec 8>"$SNAP/lock"
 flock -x 8
 [[ ! -f "$SNAP/CONFIRMED" && ! -f "$SNAP/REVERTED" ]] || exit 0
 touch "$SNAP/ROLLING_BACK"
-trap 'touch "$SNAP/ROLLBACK_FAILED"' ERR
+trap 'touch "$SNAP/ROLLBACK_FAILED"; rm -f "$SNAP/ROLLING_BACK"' ERR
 exec >>"$LOG" 2>&1
 printf 'Rollback iniciado: %s\n' "$SNAP"
 while IFS= read -r path; do
@@ -992,7 +992,8 @@ Red de seguridad:
     confirmas que entras con la clave, todo vuelve atrás solo.
   • Habrá 2-3 momentos en los que el script se detiene y te pide probar la
     conexión nueva desde OTRA terminal y escribir acceso-ok aquí. Tenla lista.
-  • Cada cambio deja un snapshot en $SNAPSHOTS_DIR (opción 11 del menú).
+  • Los cambios de SSH, UFW y Fail2ban dejan un snapshot en $SNAPSHOTS_DIR
+    (opción 11). El rollback no deshace usuarios, sudo, claves ni paquetes.
 
 ⚠️  ADVERTENCIAS:
   • NO cierres tu sesión SSH actual hasta que el script termine.
@@ -1022,7 +1023,8 @@ Safety net:
     that you can get in with the key, everything reverts on its own.
   • There will be 2-3 moments where the script stops and asks you to test the
     new connection from ANOTHER terminal and type acceso-ok here. Have it ready.
-  • Every change leaves a snapshot in $SNAPSHOTS_DIR (menu option 11).
+  • SSH, UFW and Fail2ban changes leave a snapshot in $SNAPSHOTS_DIR
+    (menu option 11). Rollback does not undo users, sudo, keys or packages.
 
 ⚠️  WARNINGS:
   • Do NOT close your current SSH session until the script finishes.
@@ -1186,7 +1188,9 @@ install_authorized_key() {
     fi
     chmod 700 "$ssh_dir"
     chmod 600 "$auth_file"
-    chown -R "$user:$user" "$ssh_dir"
+    # No cambiar el dueño de otros archivos en ~/.ssh: podría haber claves
+    # privadas u otros datos que el usuario no debía poder leer.
+    chown "$user:$user" "$ssh_dir" "$auth_file"
 }
 
 _file_mode()  { stat -c '%a' "$1" 2>/dev/null || true; }
@@ -1836,10 +1840,18 @@ warn_listening_services() {
             warn "$(ui "Quedarán filtrados por UFW; ábrelos tú con los comandos de arriba." "They will stay blocked by UFW; open them yourself with the commands above.")"
         elif confirm "$(ui "¿Abrir ahora esos puertos antes de activar UFW?" "Open those ports now, before enabling UFW?")"; then
             for p in $risky_tcp; do
-                ufw allow "${p}/tcp" >> "$LOG_FILE" 2>&1 && info "$(ui "Puerto $p permitido." "Port $p allowed.")"
+                if ! ufw allow "${p}/tcp" >> "$LOG_FILE" 2>&1; then
+                    error "$(ui "No pude permitir el puerto TCP $p." "Could not allow TCP port $p.")"
+                    return 1
+                fi
+                info "$(ui "Puerto $p permitido." "Port $p allowed.")"
             done
             for p in $risky_udp; do
-                ufw allow "${p}/udp" >> "$LOG_FILE" 2>&1 && info "$(ui "Puerto $p permitido." "Port $p allowed.")"
+                if ! ufw allow "${p}/udp" >> "$LOG_FILE" 2>&1; then
+                    error "$(ui "No pude permitir el puerto UDP $p." "Could not allow UDP port $p.")"
+                    return 1
+                fi
+                info "$(ui "Puerto $p permitido." "Port $p allowed.")"
             done
         else
             info "$(ui "No abro nada: esos puertos quedarán filtrados al activar UFW." "Opening nothing: those ports will stay blocked once UFW is enabled.")"
@@ -1861,19 +1873,18 @@ fase_4_ufw() {
     local status was_active=0
     status=$(ufw status) || return 1
     [[ "$status" == *"Status: active"* ]] && was_active=1
-    if [[ $was_active -eq 0 ]]; then
-        snapshot_state || return 1
-        if [[ $NON_INTERACTIVE -eq 0 && $ALLOW_LOCKDOWN -eq 0 ]]; then
-            arm_rollback || return 1
-        fi
+    # Se guardan también los cambios aditivos cuando UFW ya estaba activo.
+    snapshot_state || return 1
+    if [[ $was_active -eq 0 && $NON_INTERACTIVE -eq 0 && $ALLOW_LOCKDOWN -eq 0 ]]; then
+        arm_rollback || return 1
     fi
     info "$(ui "Permitiendo SSH en el puerto $CURRENT_PORT..." "Allowing SSH on port $CURRENT_PORT...")"
     if ! ufw limit "${CURRENT_PORT}/tcp" >> "$LOG_FILE" 2>&1; then
-        [[ $was_active -eq 0 ]] && revert_now "$(ui "No pude permitir SSH; no activaré UFW." "Could not allow SSH; I will not enable UFW.")"
+        revert_now "$(ui "No pude permitir SSH; no activaré UFW." "Could not allow SSH; I will not enable UFW.")"
         return 1
     fi
     if ! warn_listening_services; then
-        [[ $was_active -eq 0 ]] && revert_now "$(ui "No pude preparar las reglas UFW." "Could not prepare the UFW rules.")"
+        revert_now "$(ui "No pude preparar las reglas UFW." "Could not prepare the UFW rules.")"
         return 1
     fi
     if [[ $was_active -eq 1 ]]; then
@@ -1999,11 +2010,13 @@ fase_5_fail2ban() {
     systemctl daemon-reload 2>/dev/null || true
     if ! systemctl restart fail2ban; then
         error "$(ui "fail2ban no arrancó. Revisa: journalctl -u fail2ban -n 30" "fail2ban did not start. Check: journalctl -u fail2ban -n 30")"
+        revert_now "$(ui "Restauro la configuración anterior de Fail2ban." "Restoring the previous Fail2ban configuration.")"
         return 1
     fi
     sleep 2
     if ! fail2ban-client status sshd >/dev/null 2>&1; then
         error "$(ui "El jail sshd no quedó activo. Revisa 'fail2ban-client status' y el backend de logs." "The sshd jail is not active. Check 'fail2ban-client status' and the log backend.")"
+        revert_now "$(ui "Restauro la configuración anterior de Fail2ban." "Restoring the previous Fail2ban configuration.")"
         return 1
     fi
     fail2ban-client status sshd 2>/dev/null | sed 's/^/    /' || true
@@ -2817,6 +2830,22 @@ last_snapshot() {
     find "$SNAPSHOTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1
 }
 
+# Snapshot más reciente que todavía admite una restauración manual. Un rollback
+# automático marca el directorio con REVERTED; el binario de rollback lo omite,
+# por eso la opción del menú no debe seleccionarlo ni anunciar un falso éxito.
+last_restorable_snapshot() {
+    local candidate latest=""
+    for candidate in "$SNAPSHOTS_DIR"/*; do
+        [[ -d "$candidate" && -f "$candidate/READY" && ! -f "$candidate/REVERTED" ]] || continue
+        # El timer ya puede estar inactivo mientras su servicio sigue revirtiendo.
+        # El trap del rollback quita esta marca al fallar, por lo que ese snapshot
+        # queda disponible para reintentar la restauración.
+        [[ ! -f "$candidate/ROLLING_BACK" ]] || continue
+        latest="$candidate"
+    done
+    printf '%s' "$latest"
+}
+
 # Una cuenta atrás viva de OTRA ejecución (típicamente la que quedó armada al
 # correr desde la consola del proveedor, donde nadie puede confirmar) no debe
 # bloquear sin salida: se explica qué es y, si hay terminal, se ofrece
@@ -2847,9 +2876,9 @@ pending_rollback_gate() {
 
 restore_last_snapshot() {
     local last
-    last=$(last_snapshot)
+    last=$(last_restorable_snapshot)
     if [[ -z "$last" ]]; then
-        warn "$(ui "No hay snapshots en $SNAPSHOTS_DIR." "There are no snapshots in $SNAPSHOTS_DIR.")"
+        warn "$(ui "No hay snapshots recuperables en $SNAPSHOTS_DIR (sin revertir automáticamente)." "There are no restorable snapshots in $SNAPSHOTS_DIR (not already automatically reverted).")"
         return 1
     fi
     header "$(ui "Revertir al snapshot" "Revert to the snapshot")"
