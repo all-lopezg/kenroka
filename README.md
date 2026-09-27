@@ -84,8 +84,8 @@ The most important rule is simple:
 - If the confirmation never arrives before the countdown expires, the changes are reverted automatically.
 - SSH, UFW and fail2ban changes create snapshots; the menu restores the latest one that has not already been reverted.
 
-`acceso-ok` is the literal token in both languages: it is never translated, so the
-instructions always ask for the same word.
+The confirmation token follows the interface language — `acceso-ok` in Spanish, `access-ok`
+in English — but **both are always accepted**, so nobody is locked out by a translation.
 
 ## Requirements
 
@@ -103,7 +103,9 @@ instructions always ask for the same word.
 ```
 
 Do not rely solely on the downloaded copy of the fingerprint: compare it through an
-independent channel before trusting the verification. If you sign releases yourself:
+independent channel before trusting the verification. Releases from v1.1.2 up verify under
+the principal `kenroka`; earlier ones used the repository owner, which is only a label —
+the key and its fingerprint are the same. If you sign releases yourself:
 
 ```bash
 ssh-keygen -lf ~/.ssh/kenroka_sign.pub

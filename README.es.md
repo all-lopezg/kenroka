@@ -84,8 +84,8 @@ La regla importante es simple:
 - Si la confirmación no llega antes de que expire la cuenta atrás, los cambios se revierten solos.
 - Los cambios de SSH, UFW y Fail2ban dejan snapshots; el menú restaura el más reciente que aún no se haya revertido.
 
-`acceso-ok` es el token literal en los dos idiomas: nunca se traduce, así que las
-instrucciones siempre piden la misma palabra.
+El token sigue el idioma de la interfaz — `acceso-ok` en español, `access-ok` en inglés —
+pero **los dos se aceptan siempre**, para que nadie se quede fuera por una traducción.
 
 ## Requisitos
 
@@ -103,7 +103,9 @@ instrucciones siempre piden la misma palabra.
 ```
 
 No te fíes solo de la copia descargada de la huella: contrástala por un canal
-independiente antes de fiarte de la verificación. Si firmas tú las releases:
+independiente antes de fiarte de la verificación. Desde v1.1.2 las releases se verifican
+con el principal `kenroka`; las anteriores usaban el nombre del dueño del repositorio, que
+es solo una etiqueta — la clave y su huella son las mismas. Si firmas tú las releases:
 
 ```bash
 ssh-keygen -lf ~/.ssh/kenroka_sign.pub

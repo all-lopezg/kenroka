@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.1.1
+# Versión: 1.1.2
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.1.1"
+readonly SCRIPT_VERSION="1.1.2"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -128,10 +128,34 @@ warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
 error()   { echo -e "${RED}✘${NC}  $*" >&2; }
 header()  { echo -e "\n${BOLD}${CYAN}═══ $* ═══${NC}\n"; }
 
+# confirm_labels <idioma-ui>  ->  "[s/n]: " o "[y/n]: "
+confirm_labels() {
+    if [[ $UI_LANG == es ]]; then
+        printf '%s' "[s/n]: "
+    else
+        printf '%s' "[y/n]: "
+    fi
+}
+
+# El token de acceso se imprime en el idioma de la interfaz, pero se aceptan
+# los dos: quien sigue una guía en el otro idioma, o un tercero que mira la
+# captura de otra persona, no debe quedarse fuera por una traducción.
+access_token() {
+    if [[ $UI_LANG == es ]]; then
+        printf '%s' "acceso-ok"
+    else
+        printf '%s' "access-ok"
+    fi
+}
+
+token_ok() {
+    [[ "$1" == "acceso-ok" || "$1" == "access-ok" ]]
+}
+
 confirm() {
     local prompt="$1"
     if [[ $ASSUME_YES -eq 1 ]]; then
-        info "$prompt $(ui "→ asumido 's' (modo --yes)" "→ assumed 's' (--yes mode)")"
+        info "$prompt $(ui "→ asumido 's' (modo --yes)" "→ assumed 'y' (--yes mode)")"
         return 0
     fi
     if [[ $NON_INTERACTIVE -eq 1 ]]; then
@@ -142,11 +166,13 @@ confirm() {
     while true; do
         # EOF en stdin = respuesta "n": sin esto el bucle no termina nunca
         # cuando se corre con la entrada redirigida o cerrada.
-        read -rp "$(echo -e "${YELLOW}?${NC}  $prompt [s/n]: ")" response || return 1
+        # La etiqueta del corchete es lo único que cambia: 'y' ya se aceptaba
+        # desde siempre; escribir "[s/n]" en una pantalla en inglés hacía dudar.
+        read -rp "$(echo -e "${YELLOW}?${NC}  $prompt $(confirm_labels)")" response || return 1
         case "$response" in
             [sSyY]) return 0 ;;
             [nN])   return 1 ;;
-            *)      echo "$(ui "Responde 's' o 'n'." "Answer 's' or 'n'.")" ;;
+            *)      echo "$(ui "Responde 's' o 'n'." "Answer 'y' or 'n'.")" ;;
         esac
     done
 }
@@ -246,7 +272,7 @@ check_original_user() {
         info "$(ui "  · La fase 1 crea un usuario administrador con sudo." "  · Phase 1 creates an admin user with sudo.")"
         info "$(ui "  · La fase 2 instala TU clave pública y comprueba que sshd la acepta." "  · Phase 2 installs YOUR public key and checks sshd accepts it.")"
         info "$(ui "  · No se cierra root ni la contraseña hasta que entres con ese usuario" "  · Root and password are not closed until you log in as that user")"
-        info "$(ui "    desde OTRA terminal y escribas acceso-ok. Si no puedes, revierte solo." "    from ANOTHER terminal and type acceso-ok. If you cannot, it reverts on its own.")"
+        info "$(ui "    desde OTRA terminal y escribas acceso-ok. Si no puedes, revierte solo." "    from ANOTHER terminal and type access-ok. If you cannot, it reverts on its own.")"
         local q_usuario q_en
         if [[ -n "$USERNAME" ]]; then
             q_usuario="¿Creo ahora el usuario '$USERNAME' y sigo con el endurecido?"
@@ -1018,7 +1044,7 @@ cat <<EOF
    ${GREEN}·${NC} Rollback restores SSH, UFW and fail2ban. It does not undo users, sudo,
      keys or packages.
    ${GREEN}·${NC} Closing access starts a ${BOLD}${ROLLBACK_MINUTES} min${NC} countdown: unless someone types
-     ${YELLOW}acceso-ok${NC} from ${BOLD}another${NC} session, everything reverts on its own.
+     ${YELLOW}access-ok${NC} from ${BOLD}another${NC} session, everything reverts on its own.
 
   ${YELLOW}⚠${NC}  ${BOLD}Do NOT close this session${NC}, and keep the provider VNC console open.
   ${DIM}Idempotent: it detects what is already set and skips it, so you can repeat.${NC}
@@ -1608,8 +1634,8 @@ confirm_access() {
         warn "$(ui "La cuenta atrás corre mientras pruebas: te quedan ~${ROLLBACK_MINUTES}m." "The countdown runs while you test: ~${ROLLBACK_MINUTES}m left.")"
         warn "$(ui "Si no funciona, escribe cualquier otra cosa y revierto al instante; si te vas, revierte solo." "If it does not work, type anything else and I revert immediately; if you walk away, it reverts on its own.")"
     fi
-    read -rp "$(ui "Si la conexión nueva y sudo funcionan, escribe acceso-ok (otra cosa revierte): " "If the new connection and sudo work, type acceso-ok (anything else reverts): ")" token
-    [[ "$token" == "acceso-ok" ]]
+    read -rp "$(ui "Si la conexión nueva y sudo funcionan, escribe acceso-ok (otra cosa revierte): " "If the new connection and sudo work, type access-ok (anything else reverts): ")" token
+    token_ok "$token"
 }
 
 revert_now() {
@@ -1887,7 +1913,7 @@ fase_4_ufw() {
             return 1
         fi
         if [[ $ALLOW_LOCKDOWN -eq 0 && $ON_CONSOLE -eq 1 ]]; then
-            warn "$(ui "Desde la consola no puedes probar el SSH nuevo, así que no te pido el acceso-ok." "From the console you cannot test the new SSH, so I will not ask you for acceso-ok.")"
+            warn "$(ui "Desde la consola no puedes probar el SSH nuevo, así que no te pido el acceso-ok." "From the console you cannot test the new SSH, so I will not ask you for access-ok.")"
             if [[ -n "$ROLLBACK_JOB" ]]; then
                 warn "$(ui "La cuenta atrás de ${ROLLBACK_MINUTES}m sigue armada: si algo quedó mal, revierte sola. Al entrar por SSH desde tu computadora, cancélala con:" "The ${ROLLBACK_MINUTES}m countdown stays armed: if something is wrong it reverts on its own. When you are in over SSH from your computer, cancel it with:")"
                 echo "    sudo systemctl stop $ROLLBACK_JOB.timer"
@@ -2174,8 +2200,8 @@ fase_7_change_port() {
         fi
     else
         local token=""
-        read -rp "$(ui "Si entró por $NEW_PORT, escribe acceso-ok (otra cosa revierte): " "If you got in via $NEW_PORT, type acceso-ok (anything else reverts): ")" token
-        if [[ "$token" == "acceso-ok" ]]; then
+        read -rp "$(ui "Si entró por $NEW_PORT, escribe acceso-ok (otra cosa revierte): " "If you got in via $NEW_PORT, type access-ok (anything else reverts): ")" token
+        if token_ok "$token"; then
             finalize_old_port_removal || return 1
             disarm_rollback || return 1
         else

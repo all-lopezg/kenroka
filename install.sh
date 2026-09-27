@@ -30,7 +30,12 @@ if [[ -n "${KENROKA_VERSION:-}" ]]; then
 else
     BASE="${KENROKA_BASE:-https://github.com/${REPO}/releases/latest/download}"
 fi
-IDENTITY="all-lopezg"
+# Principal que se le pasa a ssh-keygen -Y verify. Es una etiqueta, no parte de
+# la firma (comprobado: la firma solo cubre el namespace "file", la clave y los
+# datos), así que renombrarla no invalida las releases ya publicadas. Se puso el
+# nombre del producto en vez del usuario de GitHub para que la herramienta no
+# dependa de una persona.
+IDENTITY="kenroka"
 
 # Clave pública con la que se firma SHA256SUMS.txt de cada release. Contrasta
 # su huella por un canal distinto al de la descarga antes de fiarte:
@@ -125,8 +130,7 @@ else
 fi
 
 say ""
-msg "Versión resuelta: ${RESOLVED}. Para congelarla en una flota, repite con KENROKA_VERSION=v${RESOLVED}." \
-    "Resolved version: ${RESOLVED}. To pin a fleet, repeat with KENROKA_VERSION=v${RESOLVED}."
+msg "Versión resuelta: ${RESOLVED}." "Resolved version: ${RESOLVED}."
 
 # Sin argumentos, quien llega por el one-liner va directo al asistente guiado.
 # El menú por fases sigue disponible corriendo el script a mano:

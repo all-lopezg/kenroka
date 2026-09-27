@@ -106,6 +106,32 @@ ufw_purge_port 3306 "" > /dev/null 2>&1
 check "puerto inexistente no borra nada" "" "$DELETED"
 
 # ============================================================
+# IDIOMA DE LAS PREGUNTAS Y DEL TOKEN DE ACCESO
+# ============================================================
+echo "== confirm_labels / access_token / token_ok"
+extract_fns confirm_labels access_token token_ok
+UI_LANG=es
+check "en español se pide [s/n]" "[s/n]: " "$(confirm_labels)"
+check "y el token es acceso-ok" "acceso-ok" "$(access_token)"
+UI_LANG=en
+check "en inglés se pide [y/n]" "[y/n]: " "$(confirm_labels)"
+check "y el token se traduce" "access-ok" "$(access_token)"
+# Los dos se aceptan siempre: una guia en el otro idioma, o la captura de otra
+# persona, no pueden dejar a nadie fuera.
+for t in acceso-ok access-ok; do
+    silence token_ok "$t"; check "'$t' confirma el acceso" "0" "$?"
+done
+for t in "" "si" "yes" "acceso ok" "acceso-ok " "ACCESO-OK" "x"; do
+    # Con set -e hay que capturar el codigo: un 1 esperado no debe abortar la
+    # corrida del arnés.
+    rc=0; silence token_ok "$t" || rc=$?
+    check "'$t' no confirma" "1" "$rc"
+done
+# Ninguna pantalla en inglés puede pedir el token en español.
+check "ningun texto en ingles pide acceso-ok" "0" \
+    "$(grep -c 'type acceso-ok' "$SRC" || true)"
+
+# ============================================================
 # INVARIANTES DE PANTALLA (colores reales, ancho del arte y de la tarjeta)
 # ============================================================
 echo "== colores y banner"
@@ -164,6 +190,7 @@ has "y lo que el rollback NO deshace" "No deshace usuarios, sudo" "$card"
 hasnt "no vuelve a la lista larga de antes" "8. Cambiar el puerto" "$card"
 card_en="$(render_card 2)"
 has "la version inglesa existe" "An admin user whose sudo actually works" "$card_en"
-has "y conserva el token sin traducir" "acceso-ok" "$card_en"
+has "y pide el token en ingles" "access-ok" "$card_en"
+hasnt "pero no el espanol en la pantalla inglesa" "acceso-ok" "$card_en"
 
 summary
