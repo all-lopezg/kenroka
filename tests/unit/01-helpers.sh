@@ -105,4 +105,65 @@ DELETED=""
 ufw_purge_port 3306 "" > /dev/null 2>&1
 check "puerto inexistente no borra nada" "" "$DELETED"
 
+# ============================================================
+# INVARIANTES DE PANTALLA (colores reales, ancho del arte y de la tarjeta)
+# ============================================================
+echo "== colores y banner"
+# Con '\033[1m' (comilla simple) el valor guarda texto literal: printf '%s' y
+# los heredoc lo imprimen tal cual, que es como el banner salio cubierto de
+# "\033[1m" en un VPS real. Las definiciones tienen que ir con $'...'.
+bad_quotes="$(grep -cE "readonly (RED|GREEN|YELLOW|BLUE|CYAN|BOLD|DIM|NC)='\\\\033" "$SRC" || true)"
+check "ningun color definido con comilla simple" "0" "$bad_quotes"
+for v in RED GREEN YELLOW BLUE CYAN BOLD DIM NC; do
+    n="$(grep -oE "\b${v}=" "$SRC" | grep -c . || true)"
+    check "$v definido en las dos ramas (con y sin TTY)" "2" "$n"
+done
+# El arte se mide en codepoints, no en bytes: cada caja son 3 bytes y awk del
+# sistema cuenta bytes, asi que una fila con una tilde menos "cuadraria" mal.
+banner_check="$(python3 - "$SRC" <<'PYEOF'
+import re, sys
+s = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"cat <<'BANNER'\n(.*?)\nBANNER", s, re.S)
+rows = m.group(1).split("\n") if m else []
+w = {len(r) for r in rows}
+print("ok" if len(rows) == 6 and len(w) == 1 else "mal %d filas %s" % (len(rows), sorted(w)))
+PYEOF
+)"
+check "el banner tiene 6 filas del mismo ancho" "ok" "$banner_check"
+
+# La tarjeta de bienvenida se renderiza de verdad: se saca el heredoc del fuente
+# y se expande con las variables del script, y despues se mide lo que veria una
+# terminal de 80 columnas (en codepoints, por las tildes).
+render_card() {   # render_card <1|2>  -> 1 = espanol, 2 = ingles
+    local body
+    body="$(python3 - "$SRC" "$1" <<'PYEOF'
+import re, sys
+s = open(sys.argv[1], encoding="utf-8").read()
+want = int(sys.argv[2])
+cards = [b for b in re.findall(r"cat <<EOF\n(.*?)\nEOF", s, re.S) if "\u25b8" in b]
+sys.stdout.write(cards[want - 1])
+PYEOF
+)"
+    (
+        PRETTY_NAME="Ubuntu 24.04.5 LTS"; PUBLIC_IP="185.147.157.139"
+        ORIGINAL_USER="root"; CURRENT_PORT=22; ROLLBACK_MINUTES=10
+        SNAPSHOTS_DIR="/var/lib/secure-vps/snapshots"
+        RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+        eval "cat <<XEOF
+$body
+XEOF"
+    )
+}
+card="$(render_card 1)"
+card_w="$(printf '%s\n' "$card" | python3 -c 'import sys;print(max(len(l.rstrip("\n")) for l in sys.stdin))')"
+check "la tarjeta cabe en 80 columnas" "yes" "$([[ "$card_w" -le 80 ]] && echo yes || echo "no ($card_w)")"
+has "anuncia el sistema y el puerto" "Ubuntu 24.04.5 LTS" "$card"
+has "enumera las fases"              "Usuario administrador con sudo" "$card"
+has "explica la cuenta atras"        "cuenta atrás de 10 min" "$card"
+has "y lo que el rollback NO deshace" "No deshace usuarios, sudo" "$card"
+hasnt "no vuelve a la lista larga de antes" "8. Cambiar el puerto" "$card"
+card_en="$(render_card 2)"
+has "la version inglesa existe" "An admin user whose sudo actually works" "$card_en"
+has "y conserva el token sin traducir" "acceso-ok" "$card_en"
+
 summary

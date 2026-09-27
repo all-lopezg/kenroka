@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.1.0
+# Versión: 1.1.1
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="1.1.1"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -78,17 +78,21 @@ ADMIN_IPS=""
 LOCKDOWN=1
 AUDIT_MODE=0            # --audit: reporte de solo lectura, no toca nada
 
-# Colores (se desactivan si no hay TTY)
+# Colores (se desactivan si no hay TTY). Van con comillas ANSI-C ($'...') a
+# propósito: con '\033[1m' el valor guarda el texto literal "\033[1m", que solo
+# interpreta `echo -e`. printf '%s' y los heredoc lo imprimían tal cual, y por
+# eso el banner salía cubierto de basura en pantalla.
 if [[ -t 1 ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[1;33m'
-    readonly BLUE='\033[0;34m'
-    readonly CYAN='\033[0;36m'
-    readonly BOLD='\033[1m'
-    readonly NC='\033[0m'
+    readonly RED=$'\033[0;31m'
+    readonly GREEN=$'\033[0;32m'
+    readonly YELLOW=$'\033[1;33m'
+    readonly BLUE=$'\033[0;34m'
+    readonly CYAN=$'\033[0;36m'
+    readonly BOLD=$'\033[1m'
+    readonly DIM=$'\033[2m'
+    readonly NC=$'\033[0m'
 else
-    readonly RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' NC=''
+    readonly RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
 fi
 
 # Idioma de la interfaz: detección automática (es* → español, resto → inglés),
@@ -957,7 +961,7 @@ ufw_purge_port() {
 banner() {
     printf '%s' "${BOLD}${CYAN}"
     cat <<'BANNER'
- ██╗  ██╗███████╗███╗   ██╗██████╗  ██████╗  ██╗  ██╗ █████╗
+ ██╗  ██╗███████╗███╗   ██╗██████╗  ██████╗  ██╗  ██╗ █████╗ 
  ██║ ██╔╝██╔════╝████╗  ██║██╔══██╗██╔═══██╗ ██║ ██╔╝██╔══██╗
  █████╔╝ █████╗  ██╔██╗ ██║██████╔╝██║   ██║ █████╔╝ ███████║
  ██╔═██╗ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║ ██╔═██╗ ██╔══██║
@@ -973,65 +977,51 @@ fase_0_welcome() {
     banner
 if [[ $UI_LANG == es ]]; then
 cat <<EOF
-IP pública detectada: ${BOLD}${PUBLIC_IP}${NC}
-Usuario lanzador:    ${BOLD}${ORIGINAL_USER:-root}${NC}
+  ${CYAN}▸${NC} ${BOLD}$PRETTY_NAME${NC} · ${PUBLIC_IP} · como ${ORIGINAL_USER:-root} · puerto ${CURRENT_PORT}
+  ${DIM}El idioma sale de tu locale; se cambia con --lang en (o --lang es).${NC}
 
-Este script va a endurecer la seguridad de tu VPS Ubuntu:
-  1. Crear un usuario con sudo que realmente funcione (contraseña o NOPASSWD)
-  2. Instalar tu clave pública y verificar que sshd la acepta
-  3. Aplicar límites de seguridad (MaxAuthTries, MaxSessions, etc.)
-  4. Deshabilitar login de root y autenticación por contraseña
-  5. Activar el cortafuegos UFW avisando de lo que va a bloquear
-  6. Instalar y configurar Fail2ban (con tu IP excluida del bloqueo)
-  7. Configurar actualizaciones automáticas de seguridad
-  8. Cambiar el puerto SSH fuera del 22 (recomendado)
+  ${BOLD}LO QUE VAMOS A HACER${NC}
+   ${CYAN}1${NC}  Usuario administrador con sudo que funciona de verdad
+   ${CYAN}2${NC}  Tu clave pública, verificada antes de cerrar nada
+   ${CYAN}3${NC}  Límites de sshd, y cierre del root y de la contraseña
+   ${CYAN}4${NC}  UFW, avisando de lo que va a bloquear
+   ${CYAN}5${NC}  Fail2ban con tu IP excluida de los baneos
+   ${CYAN}6${NC}  Actualizaciones automáticas de seguridad
+   ${CYAN}7${NC}  SSH fuera del 22 (recomendado; decides tú)
 
-Red de seguridad:
-  • Antes de cerrar el acceso se comprueba la config efectiva de sshd.
-  • Al cerrar el acceso arranca una cuenta atrás de ${ROLLBACK_MINUTES}m: si no
-    confirmas que entras con la clave, todo vuelve atrás solo.
-  • Habrá 2-3 momentos en los que el script se detiene y te pide probar la
-    conexión nueva desde OTRA terminal y escribir acceso-ok aquí. Tenla lista.
-  • Los cambios de SSH, UFW y Fail2ban dejan un snapshot en $SNAPSHOTS_DIR
-    (opción 11). El rollback no deshace usuarios, sudo, claves ni paquetes.
+  ${BOLD}LA RED DE SEGURIDAD${NC}
+   ${GREEN}·${NC} Cada cambio deja un snapshot y revertir es una opción del menú.
+   ${GREEN}·${NC} El rollback devuelve SSH, UFW y fail2ban. No deshace usuarios, sudo,
+     claves ni paquetes.
+   ${GREEN}·${NC} Al cerrar el acceso arranca una cuenta atrás de ${BOLD}${ROLLBACK_MINUTES} min${NC}: si nadie escribe
+     ${YELLOW}acceso-ok${NC} desde ${BOLD}otra${NC} sesión, todo vuelve atrás solo.
 
-⚠️  ADVERTENCIAS:
-  • NO cierres tu sesión SSH actual hasta que el script termine.
-  • Ten abierta la consola VNC/KVM de tu proveedor como respaldo.
-
-El script es IDEMPOTENTE: puedes ejecutarlo varias veces sin efectos
-secundarios. Detectará lo ya configurado y lo omitirá.
+  ${YELLOW}⚠${NC}  ${BOLD}No cierres esta sesión${NC} y mantén abierta la consola VNC del proveedor.
+  ${DIM}Idempotente: detecta lo ya configurado y lo omite, puedes repetir.${NC}
 EOF
 else
 cat <<EOF
-Detected public IP: ${BOLD}${PUBLIC_IP}${NC}
-Launching user:     ${BOLD}${ORIGINAL_USER:-root}${NC}
+  ${CYAN}▸${NC} ${BOLD}$PRETTY_NAME${NC} · ${PUBLIC_IP} · as ${ORIGINAL_USER:-root} · port ${CURRENT_PORT}
+  ${DIM}The language comes from your locale; change it with --lang es (or --lang en).${NC}
 
-This script will harden your Ubuntu VPS:
-  1. Create a user with sudo that actually works (password or NOPASSWD)
-  2. Install your public key and verify sshd accepts it
-  3. Apply security limits (MaxAuthTries, MaxSessions, etc.)
-  4. Disable root login and password authentication
-  5. Enable the UFW firewall, warning you about what it will block
-  6. Install and configure Fail2ban (with your IP excluded from bans)
-  7. Configure automatic security updates
-  8. Move SSH off port 22 (recommended)
+  ${BOLD}WHAT WE ARE ABOUT TO DO${NC}
+   ${CYAN}1${NC}  An admin user whose sudo actually works
+   ${CYAN}2${NC}  Your public key, verified before anything gets closed
+   ${CYAN}3${NC}  sshd limits, and closing root and password login
+   ${CYAN}4${NC}  UFW, warning you about what it will block
+   ${CYAN}5${NC}  Fail2ban with your IP excluded from bans
+   ${CYAN}6${NC}  Automatic security updates
+   ${CYAN}7${NC}  SSH off port 22 (recommended; you decide)
 
-Safety net:
-  • Before locking down, the effective sshd configuration is verified.
-  • Locking down starts a ${ROLLBACK_MINUTES}m countdown: if you do not confirm
-    that you can get in with the key, everything reverts on its own.
-  • There will be 2-3 moments where the script stops and asks you to test the
-    new connection from ANOTHER terminal and type acceso-ok here. Have it ready.
-  • SSH, UFW and Fail2ban changes leave a snapshot in $SNAPSHOTS_DIR
-    (menu option 11). Rollback does not undo users, sudo, keys or packages.
+  ${BOLD}THE SAFETY NET${NC}
+   ${GREEN}·${NC} Every change leaves a snapshot, and reverting is a menu option.
+   ${GREEN}·${NC} Rollback restores SSH, UFW and fail2ban. It does not undo users, sudo,
+     keys or packages.
+   ${GREEN}·${NC} Closing access starts a ${BOLD}${ROLLBACK_MINUTES} min${NC} countdown: unless someone types
+     ${YELLOW}acceso-ok${NC} from ${BOLD}another${NC} session, everything reverts on its own.
 
-⚠️  WARNINGS:
-  • Do NOT close your current SSH session until the script finishes.
-  • Keep your provider's VNC/KVM console open as a fallback.
-
-The script is IDEMPOTENT: you can run it several times without side
-effects. It detects what is already configured and skips it.
+  ${YELLOW}⚠${NC}  ${BOLD}Do NOT close this session${NC}, and keep the provider VNC console open.
+  ${DIM}Idempotent: it detects what is already set and skips it, so you can repeat.${NC}
 EOF
 fi
     if guided_active; then

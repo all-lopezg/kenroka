@@ -7,7 +7,10 @@ set -uo pipefail
 SRC=/Users/allan/Documents/Proyectos/kenroka
 D="$(mktemp -d /tmp/kenroka-inst.XXXXXX)"
 PUB="$D/pub"
-PORT=$(( 8700 + RANDOM % 300 ))
+# Un puerto al azar puede chocar con el de una corrida anterior interrumpida
+# (el trap no llega con SIGKILL): se pide uno libre al propio kernel.
+PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+[[ "$PORT" =~ ^[0-9]+$ ]] || { echo "no consegui un puerto libre" >&2; exit 3; }
 mkdir -p "$PUB"
 trap 'kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$D"' EXIT
 
@@ -45,7 +48,9 @@ fi
 # se queda esperando entrada de un stdin que aquí no es terminal; con pty.fork
 # el padre lee hasta el EIO de que el hijo murió y devuelve el estado real.
 run_inst() {
-    KENROKA_BASE="http://127.0.0.1:$PORT" python3 -c '
+    # El idioma solo se fija si quien llama no lo trajo: los casos de idioma
+    # necesitan traer el suyo propio.
+    LANG="${LANG:-es_ES.UTF-8}" KENROKA_BASE="http://127.0.0.1:$PORT" python3 -c '
 import os, pty, sys
 cmd = sys.argv[1:]
 pid, fd = pty.fork()
@@ -69,15 +74,15 @@ sys.exit(os.waitstatus_to_exitcode(st))
 echo "== caso feliz (el script se ejecuta con --help y sale solo)"
 out="$(run_inst --help)"
 has "verifica la firma"              "Firma válida" "$out"
-has "verifica el checksum"           "Contenido verificado" "$out"
-has "el script heredó la terminal"   "Usage: sudo bash" "$out"
+has "verifica el checksum"           "secure-vps.sh: OK" "$out"
+has "el script heredó la terminal"   "sudo bash" "$out"   # "Uso:" o "Usage:" segun el idioma
 hasnt "no hubo error de checksum"    "no cuadra" "$out"
 
 echo "== archivo servido manipulado (un byte)"
 printf '\n' >> "$PUB/secure-vps.sh"
 out="$(run_inst --help)"
 has "rechaza el checksum"            "no cuadra" "$out"
-hasnt "no llega a ejecutar el script" "Contenido verificado" "$out"
+hasnt "no llega a ejecutar el script" "Usage: sudo bash" "$out"
 cp "$SRC/secure-vps.sh" "$PUB/secure-vps.sh"
 
 echo "== lista de checksums firmada por otra mano"
@@ -86,11 +91,27 @@ ssh-keygen -t ed25519 -N "" -C "ajena" -f "$D/otherkey" -q
     && ssh-keygen -Y sign -f "$D/otherkey" -n file SHA256SUMS.txt >/dev/null )
 out="$(run_inst --help)"
 has "rechaza una firma que no valida" "NO valida" "$out"
-hasnt "no ejecuta nada"                "Contenido verificado" "$out"
+hasnt "no ejecuta nada"                "Usage: sudo bash" "$out"
+# Se devuelve la firma legitima: si no, todo lo que venga despues caeria aqui
+# por un estado que dejo el caso anterior, no por lo que se esta probando.
+( cd "$PUB" && rm -f SHA256SUMS.txt.sig \
+    && ssh-keygen -Y sign -f "$D/testkey" -n file SHA256SUMS.txt >/dev/null )
 
 echo "== sin terminal de control"
-out="$(KENROKA_BASE="http://127.0.0.1:$PORT" bash "$PUB/install.sh" --help < /dev/null 2>&1)"
+out="$(LANG=es_ES.UTF-8 KENROKA_BASE="http://127.0.0.1:$PORT" bash "$PUB/install.sh" --help < /dev/null 2>&1)"
 has "para antes de descargar" "no hay terminal de control" "$out"
+
+# El instalador y el asistente tienen que hablar el mismo idioma: antes el
+# instalador era solo español y el asistente se detectaba, y en un VPS con
+# locale inglés se veían mezclados.
+echo "== un solo idioma en toda la cadena"
+out="$(run_inst --lang en --help)"
+has "con --lang en el instalador cambia de idioma" "Signature valid" "$out"
+has "y el script también"                          "Usage: sudo bash" "$out"
+hasnt "no queda español en el instalador"           "Firma válida" "$out"
+out="$(LANG=C run_inst --help)"
+has "con locale C el instalador cae en inglés" "Resolved version" "$out"
+hasnt "y no dice Versión resuelta"              "Versión resuelta" "$out"
 
 printf '\n  resultado: %d ok, %d fallas\n' "$PASS" "$FAILN"
 [[ $FAILN -eq 0 ]]
