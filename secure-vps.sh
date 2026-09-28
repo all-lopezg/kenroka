@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.1.3"
+readonly SCRIPT_VERSION="1.2.0"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -78,6 +78,12 @@ VALID_FINGERPRINT=""
 ADMIN_IPS=""
 LOCKDOWN=1
 AUDIT_MODE=0            # --audit: reporte de solo lectura, no toca nada
+VERIFY_MODE=0           # --verify: solo comprobar y guardar reporte
+VERIFY_REPORT=""
+VERIFY_FAILURES=0
+VERIFY_PENDING=0
+VERIFY_EXTERNAL=unconfirmed
+VERIFY_STATUS=""
 
 # Colores (se desactivan si no hay TTY). Van con comillas ANSI-C ($'...') a
 # propósito: con '\033[1m' el valor guarda el texto literal "\033[1m", que solo
@@ -392,6 +398,9 @@ Opciones:
   --experto            Sin textos de guía: el flujo directo de siempre.
   --audit              Reporte de solo lectura: qué está endurecido, qué falta
                        y qué riesgos hay. No escribe nada. Impide preguntas.
+  --verify             Verificar hardening sin aplicar cambios; requiere --user.
+                       Guarda reporte. Salida: 0 exitoso, 2 pendientes, 1 fallos.
+                       --yes o sin terminal no confirman el acceso externo.
   --help               Mostrar esta ayuda.
 
 Ejemplo de auditoría (antes de cambiar nada; guarda el texto para revisarlo):
@@ -441,6 +450,9 @@ Options:
   --experto            No guidance text: the direct flow as always.
   --audit              Read-only report: what is hardened, what is missing and
                        what is risky. Writes nothing; implies no prompts.
+  --verify             Verify hardening without applying changes; requires --user.
+                       Saves a report. Exit: 0 successful, 2 pending, 1 failures.
+                       --yes or no terminal cannot confirm external access.
   --help               Show this help.
 
 Audit example (before changing anything; keep the text to review it):
@@ -531,6 +543,7 @@ parse_args() {
             # no es interactivo, las preguntas de las verificaciones previas se
             # saltan y el reporte siempre sale.
             --audit)           AUDIT_MODE=1; NON_INTERACTIVE=1; shift ;;
+            --verify)          VERIFY_MODE=1; shift ;;
             --lang)            require_val "$@"
                                case "$2" in es|en) UI_LANG="$2";; *) error "$(ui "Idioma no soportado: usa --lang es o --lang en" "Unsupported language: use --lang es or --lang en")"; exit 1;; esac
                                shift 2 ;;
@@ -539,6 +552,12 @@ parse_args() {
         esac
     done
 
+    if [[ $AUDIT_MODE -eq 1 && $VERIFY_MODE -eq 1 ]]; then
+        error "$(ui "Usa --audit o --verify por separado." "Use --audit or --verify separately.")"; exit 1
+    fi
+    if [[ $VERIFY_MODE -eq 1 && -z "$USERNAME" ]]; then
+        error "$(ui "--verify requiere --user NOMBRE para comprobar el administrador." "--verify requires --user NAME to check the administrator.")"; exit 1
+    fi
     case "$SUDO_MODE" in
         "" | prompt | nopasswd | keep) ;;
         *) error "$(ui "--sudo debe ser prompt, nopasswd o keep (venía: $SUDO_MODE)" "--sudo must be prompt, nopasswd or keep (got: $SUDO_MODE)")"; exit 1 ;;
@@ -570,7 +589,7 @@ parse_args() {
 
     # Las obligaciones del modo desatendido son del endurecido (usuario, clave,
     # sudo, riesgo de encierro). Una auditoría no necesita ninguna.
-    if [[ $NON_INTERACTIVE -eq 1 && $AUDIT_MODE -eq 0 ]]; then
+    if [[ $NON_INTERACTIVE -eq 1 && $AUDIT_MODE -eq 0 && $VERIFY_MODE -eq 0 ]]; then
         if [[ -z "$USERNAME" ]]; then
             error "$(ui "En modo no interactivo, --user es obligatorio." "In non-interactive mode, --user is required.")"
             exit 1
@@ -2860,6 +2879,362 @@ audit_report() {
 }
 
 # ============================================================
+# VERIFICACIÓN FINAL: consulta el estado, no aplica ni confirma cambios
+# ============================================================
+verification_item() {
+    local level="$1" label="$2" detail="$3" mark
+    case "$level" in
+        bad) VERIFY_FAILURES=$((VERIFY_FAILURES + 1)); mark="$(ui 'FALLO' 'FAIL')" ;;
+        warn) VERIFY_PENDING=$((VERIFY_PENDING + 1)); mark="$(ui 'PENDIENTE' 'PENDING')" ;;
+        ok) mark=OK ;;
+        *) mark=INFO ;;
+    esac
+    # Texto sin colores: también se usa como reporte persistente.
+    printf '  [%s] %s: %s\n' "$mark" "$label" "$detail"
+    return 0
+}
+
+verification_expect() {
+    local actual="$1" expected="$2" label="$3" level="${4:-warn}"
+    if [[ "$actual" == "$expected" ]]; then level=ok; fi
+    verification_item "$level" "$label" "${actual:-$(ui 'sin datos' 'no data')} ($(ui 'esperado' 'expected'): $expected)"
+}
+
+verification_port_contains() {
+    local list="${1//,/ }" wanted="$2" token start end resolved
+    for token in $list; do
+        if [[ "$token" == "$wanted" ]]; then return 0; fi
+        if [[ "$token" =~ ^([0-9]+):([0-9]+)$ ]]; then
+            start="${BASH_REMATCH[1]}"; end="${BASH_REMATCH[2]}"
+            if (( 10#$wanted >= 10#$start && 10#$wanted <= 10#$end )); then return 0; fi
+        elif [[ "$token" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+            resolved=$(getent services "$token" 2>/dev/null | awk '{split($2,p,"/"); print p[1]; exit}' || true)
+            [[ "$resolved" == "$wanted" ]] && return 0
+        fi
+    done
+    return 1
+}
+
+verification_key_ok() {
+    local user="$1" home path mode owner
+    home=$(user_home "$user")
+    [[ -n "$home" ]] && existing_key_present "$user" >/dev/null 2>&1 || return 1
+    for path in "$home" "$home/.ssh" "$home/.ssh/authorized_keys"; do
+        mode=$(_file_mode "$path"); owner=$(_file_owner "$path")
+        [[ -n "$mode" && ( "$owner" == "$user" || "$owner" == root ) ]] || return 1
+        world_or_group_writable "$mode" && return 1
+    done
+    return 0
+}
+
+verification_ssh() {
+    local addr="${SSH_CONNECTION:-}" ports port root_eff keys_file
+    addr="${addr%% *}"
+    addr="${addr:-127.0.0.1}"
+    [[ "$addr" =~ ^[0-9a-fA-F:.]+$ ]] || addr=127.0.0.1
+    AUDIT_EFF=""
+    if ! sshd -t >/dev/null 2>&1 || ! AUDIT_EFF=$(sshd -T -C "user=$USERNAME,host=$addr,addr=$addr" 2>/dev/null); then
+        verification_item bad SSH "$(ui 'No pude validar la sintaxis/configuración efectiva.' 'Could not validate syntax/effective configuration.')"
+        return 0
+    fi
+    verification_item info "$(ui 'Contexto SSH' 'SSH context')" "user=$USERNAME addr=$addr"
+    for port in passwordauthentication kbdinteractiveauthentication permitemptypasswords x11forwarding; do
+        verification_expect "$(audit_eff_val "$port")" no "$port"
+    done
+    verification_expect "$(audit_eff_val pubkeyauthentication)" yes PubkeyAuthentication bad
+    # Match User root puede abrir root aunque las políticas del administrador no.
+    root_eff=$(sshd -T -C "user=root,host=$addr,addr=$addr" 2>/dev/null) || root_eff=""
+    verification_expect "$(awk '$1 == "permitrootlogin" {print $2; exit}' <<< "$root_eff")" no PermitRootLogin
+    if ! grep -qxF "$USERNAME" < <(audit_eff_rest allowusers | tr ' ' '\n'); then
+        verification_item warn AllowUsers "$(ui "No se verificó una entrada exacta para $USERNAME; revisa la política." "An exact entry for $USERNAME was not verified; review the policy.")"
+    else
+        verification_item ok AllowUsers "$USERNAME"
+    fi
+    for port in denyusers denygroups allowgroups authenticationmethods; do
+        # Estas restricciones requieren contrastar los grupos y métodos del cliente.
+        # El perfil escrito por kenroka no las añade: se informa sin afirmar acceso.
+        keys_file=$(audit_eff_rest "$port")
+        if [[ -n "$keys_file" && ! ( "$port" == authenticationmethods && ( "$keys_file" == any || "$keys_file" == publickey ) ) ]]; then
+            verification_item warn "$port" "$(ui 'Restricción adicional que debe revisarse' 'Additional restriction to review'): $keys_file"
+        fi
+    done
+    verification_expect "$(audit_eff_val maxauthtries)" 3 MaxAuthTries
+    verification_expect "$(audit_eff_val maxsessions)" 2 MaxSessions
+    verification_expect "$(audit_eff_val logingracetime)" 30 LoginGraceTime
+    verification_expect "$(audit_eff_val clientaliveinterval)" 300 ClientAliveInterval
+    verification_expect "$(audit_eff_val clientalivecountmax)" 2 ClientAliveCountMax
+    keys_file=$(audit_eff_rest authorizedkeysfile)
+    if [[ " $keys_file " != *' .ssh/authorized_keys '* ]]; then
+        verification_item warn AuthorizedKeysFile "$(ui 'sshd no usa la ruta de clave que verifica kenroka.' 'sshd does not use the key path that kenroka checks.')"
+    fi
+    if ! systemctl is-active --quiet ssh.service || ! pgrep -x sshd >/dev/null; then
+        verification_item bad SSH "$(ui 'El servicio no está funcionando.' 'The service is not running.')"
+    fi
+    ports=$(listening_ports) || ports=""
+    if [[ -z "$ports" ]]; then
+        verification_item bad "$(ui 'Escucha SSH' 'SSH listeners')" "$(ui 'No se encontró ningún listener.' 'No listener found.')"
+    else
+        verification_item ok "$(ui 'Escucha SSH' 'SSH listeners')" "$ports"
+    fi
+    if [[ -n "$NEW_PORT" && "$ports" != "$NEW_PORT " ]]; then
+        verification_item bad "$(ui 'Puerto esperado' 'Expected port')" "$(ui "Se esperaba solo $NEW_PORT; escucha: $ports" "Expected only $NEW_PORT; listening: $ports")"
+    fi
+    if [[ $SOCKET_ACTIVATED -eq 1 ]]; then
+        port=ssh.socket
+    else
+        port=ssh.service
+    fi
+    verification_expect "$(systemctl is-enabled "$port" 2>/dev/null || true)" enabled "$port ($(ui 'al arrancar' 'at boot'))"
+}
+
+verification_user() {
+    local mode="$SUDO_MODE" state
+    if ! valid_username "$USERNAME" || ! id "$USERNAME" >/dev/null 2>&1 || [[ "$(id -u "$USERNAME")" == 0 ]]; then
+        verification_item bad "$(ui 'Administrador' 'Administrator')" "$(ui 'No existe un administrador no-root válido.' 'No valid non-root administrator exists.')"
+        return 0
+    fi
+    verification_item ok "$(ui 'Administrador' 'Administrator')" "$USERNAME"
+    if verification_key_ok "$USERNAME"; then
+        verification_item ok "$(ui 'Clave y permisos' 'Key and permissions')" "$(ui 'Clave válida; propietario y permisos correctos.' 'Valid key; owner and permissions are correct.')"
+    else
+        verification_item bad "$(ui 'Clave y permisos' 'Key and permissions')" "$(ui 'Clave ausente/inválida o permisos/propietario incorrectos.' 'Missing/invalid key or incorrect permissions/owner.')"
+    fi
+    if ! visudo -c >/dev/null 2>&1 || ! sudo -l -U "$USERNAME" -- true >/dev/null 2>&1; then
+        verification_item bad sudo "$(ui 'La política efectiva no permite administrar.' 'The effective policy does not allow administration.')"
+        return 0
+    fi
+    if [[ -z "$mode" && -f /etc/sudoers.d/90-"$USERNAME" ]]; then
+        if grep -q 'NOPASSWD:ALL' /etc/sudoers.d/90-"$USERNAME"; then mode=nopasswd
+        elif grep -q 'PASSWD:ALL' /etc/sudoers.d/90-"$USERNAME"; then mode=prompt; fi
+    fi
+    state=$(password_state "$USERNAME")
+    if runuser -u "$USERNAME" -- sudo -k -n true >/dev/null 2>&1; then
+        if [[ "$mode" == prompt ]]; then
+            verification_item bad sudo "$(ui 'Se eligió contraseña, pero sudo funciona sin ella.' 'Password mode was selected, but sudo works without it.')"
+        else
+            verification_item ok sudo NOPASSWD
+        fi
+    elif [[ "$mode" == nopasswd || "$state" != P ]]; then
+        verification_item bad sudo "$(ui 'No se comprobó una vía sudo utilizable.' 'No usable sudo path was verified.')"
+    else
+        verification_item ok sudo "$(ui 'Permisos válidos y contraseña utilizable; falta probarla desde el cliente.' 'Valid privileges and usable password; still needs a client test.')"
+    fi
+}
+
+verification_firewall() {
+    local verbose ports port numbered alias
+    if ! has_ufw; then
+        verification_item warn UFW "$(ui 'No instalado.' 'Not installed.')"
+        return 0
+    fi
+    if ! verbose=$(ufw status verbose 2>/dev/null); then
+        verification_item bad UFW "$(ui 'No pude consultar el firewall.' 'Could not query the firewall.')"
+        return 0
+    fi
+    if ! grep -q '^Status: active' <<< "$verbose"; then
+        verification_item warn UFW "$(ui 'Inactivo.' 'Inactive.')"
+        return 0
+    fi
+    verification_item ok UFW "$(ui 'Activo.' 'Active.')"
+    if ! grep -qE '^Default: (deny|reject) \(incoming\)' <<< "$verbose"; then
+        verification_item warn UFW "$(ui 'La política de entrada no es restrictiva.' 'The incoming policy is not restrictive.')"
+    else
+        verification_item ok "$(ui 'Entrada por defecto' 'Default incoming')" deny/reject
+    fi
+    numbered=$(ufw status numbered 2>/dev/null) || numbered=""
+    ports=$(listening_ports) || ports=""
+    for port in $ports; do
+        alias="${port}(/tcp)?"
+        [[ "$port" == 22 ]] && alias="$alias|OpenSSH"
+        if grep -qE "^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]+($alias)([[:space:]]+\\(v6\\))?[[:space:]]+(ALLOW|LIMIT)[[:space:]]+IN([[:space:]]|$)" <<< "$numbered"; then
+            verification_item ok "$(ui 'Regla SSH' 'SSH rule')" "$port/tcp"
+        else
+            verification_item bad "$(ui 'Regla SSH' 'SSH rule')" "$(ui "No se verificó una regla que permita $port/tcp." "No rule allowing $port/tcp was verified.")"
+        fi
+    done
+    verification_item info "$(ui 'Otros servicios TCP/UDP' 'Other TCP/UDP services')" "$(ui 'El usuario debe comprobar desde su equipo los servicios que necesita.' 'The user must test the services they need from their computer.')"
+}
+
+verification_fail2ban() {
+    local actions action port ports covered value protocol
+    if ! has_fail2ban; then
+        verification_item warn Fail2ban "$(ui 'No instalado.' 'Not installed.')"
+        return 0
+    fi
+    if ! systemctl is-active --quiet fail2ban || ! timeout 15 fail2ban-client status sshd >/dev/null 2>&1; then
+        verification_item bad Fail2ban "$(ui 'Servicio o jail sshd inactivo.' 'Service or sshd jail inactive.')"
+        return 0
+    fi
+    verification_item ok Fail2ban "$(ui 'Servicio y jail sshd activos.' 'Service and sshd jail active.')"
+    verification_expect "$(systemctl is-enabled fail2ban 2>/dev/null || true)" enabled "Fail2ban ($(ui 'al arrancar' 'at boot'))"
+    actions=$(timeout 15 fail2ban-client get sshd actions 2>/dev/null | tail -n +2 | tr ',' ' ') || actions=""
+    ports=$(listening_ports) || ports=""
+    for port in $ports; do
+        covered=0
+        for action in $actions; do
+            value=$(timeout 15 fail2ban-client get sshd action "$action" port 2>/dev/null) || value=""
+            protocol=$(timeout 15 fail2ban-client get sshd action "$action" protocol 2>/dev/null) || protocol=""
+            if [[ "$protocol" == tcp || "$protocol" == all ]] && verification_port_contains "$value" "$port"; then
+                covered=1; break
+            fi
+        done
+        if [[ $covered -eq 1 ]]; then
+            verification_item ok "$(ui 'Puerto protegido por Fail2ban' 'Port protected by Fail2ban')" "$port"
+        else
+            verification_item warn Fail2ban "$(ui "No pude verificar que una acción activa cubra el puerto $port." "Could not verify that an active action covers port $port.")"
+        fi
+    done
+}
+
+verification_updates() {
+    local config
+    if ! systemctl is-active --quiet unattended-upgrades; then
+        verification_item warn "$(ui 'Actualizaciones automáticas' 'Automatic updates')" "$(ui 'Servicio inactivo.' 'Service inactive.')"
+    else
+        verification_item ok unattended-upgrades active
+    fi
+    verification_expect "$(systemctl is-enabled unattended-upgrades 2>/dev/null || true)" enabled "unattended-upgrades ($(ui 'al arrancar' 'at boot'))"
+    if config=$(apt-config dump 2>/dev/null); then
+        if ! grep -qE '^APT::Periodic::Update-Package-Lists "1";' <<< "$config" ||
+           ! grep -qE '^APT::Periodic::Unattended-Upgrade "1";' <<< "$config"; then
+            verification_item warn "$(ui 'Configuración APT efectiva' 'Effective APT configuration')" "$(ui 'Las actualizaciones periódicas no están habilitadas.' 'Periodic updates are not enabled.')"
+        else
+            verification_item ok "$(ui 'Configuración APT efectiva' 'Effective APT configuration')" "$(ui 'Habilitada.' 'Enabled.')"
+        fi
+    else
+        verification_item bad APT "$(ui 'No pude consultar la configuración efectiva.' 'Could not query effective configuration.')"
+    fi
+    for config in apt-daily.timer apt-daily-upgrade.timer; do
+        if systemctl is-enabled --quiet "$config" && systemctl is-active --quiet "$config"; then
+            verification_item ok "$config" "$(ui 'Programado.' 'Scheduled.')"
+        else
+            verification_item warn "$config" "$(ui 'No está programado para ejecutarse.' 'Not scheduled to run.')"
+        fi
+    done
+    if [[ -f "$REBOOT_FLAG" ]]; then
+        verification_item warn "$(ui 'Reinicio pendiente' 'Reboot pending')" "$(ui 'Reinicia y repite la verificación.' 'Reboot and repeat verification.')"
+    fi
+}
+
+verification_rollbacks() {
+    local pending dir
+    if ! pending=$(list_pending_rollbacks); then
+        verification_item bad "$(ui 'Reversión' 'Rollback')" "$(ui 'No pude consultar los temporizadores.' 'Could not query timers.')"
+    elif [[ -n "$pending" ]]; then
+        verification_item warn "$(ui 'Cuenta atrás pendiente' 'Pending countdown')" "$pending"
+    else
+        verification_item ok "$(ui 'Cuenta atrás' 'Countdown')" "$(ui 'Ninguna pendiente.' 'None pending.')"
+    fi
+    for dir in "$SNAPSHOTS_DIR"/*; do
+        [[ -d "$dir" && ! -f "$dir/REVERTED" ]] || continue
+        if [[ -f "$dir/ROLLBACK_FAILED" ]]; then
+            verification_item bad "$(ui 'Rollback fallido' 'Failed rollback')" "$dir"
+        elif [[ -f "$dir/ROLLING_BACK" ]]; then
+            verification_item warn "$(ui 'Reversión en curso' 'Rollback in progress')" "$dir"
+        fi
+    done
+}
+
+verification_collect() {
+    VERIFY_FAILURES=0
+    VERIFY_PENDING=0
+    printf '%s\n' "$(ui 'VERIFICACIÓN DEL HARDENING' 'HARDENING VERIFICATION')"
+    printf '%s\n' "$(ui 'Fecha' 'Date'): $(date -Is)"
+    printf '%s\n' "$(ui 'Equipo' 'Host'): $(hostname)"
+    printf '%s\n' "$(ui 'Versión' 'Version'): $SCRIPT_VERSION"
+    printf '%s\n' "$(ui 'Administrador' 'Administrator'): $USERNAME"
+    printf '%s\n' "$(ui 'Política sudo solicitada' 'Requested sudo policy'): ${SUDO_MODE:-$(ui 'conservar la efectiva' 'keep effective policy')}"
+    printf '%s\n' "$(ui 'Puerto solicitado' 'Requested port'): ${NEW_PORT:-$(ui 'actual' 'current')}"
+    detect_ssh_activation
+    verification_user
+    verification_ssh
+    verification_firewall
+    verification_fail2ban
+    verification_updates
+    verification_rollbacks
+}
+
+verification_result() {
+    if [[ $VERIFY_FAILURES -gt 0 ]]; then
+        VERIFY_STATUS="$(ui 'CON FALLOS' 'FAILED')"
+        return 1
+    elif [[ $VERIFY_PENDING -gt 0 || "$VERIFY_EXTERNAL" != confirmed ]]; then
+        VERIFY_STATUS="$(ui 'CON PENDIENTES' 'PENDING')"
+        return 2
+    fi
+    VERIFY_STATUS="$(ui 'EXITOSO' 'SUCCESSFUL')"
+    return 0
+}
+
+verification_run() {
+    local token="" rc=0 reports="$STATE_DIR/reports" address=""
+    if [[ -z "$USERNAME" ]]; then
+        read -rp "$(ui 'Usuario administrador a verificar: ' 'Administrator to verify: ')" USERNAME || return 1
+    fi
+    if ! valid_username "$USERNAME"; then
+        error "$(ui 'Indica un administrador válido con --user NOMBRE.' 'Specify a valid administrator with --user NAME.')"
+        return 1
+    fi
+    # El único estado que escribe esta opción es su reporte, privado de root.
+    mkdir -p "$reports" || return 1
+    chmod 700 "$STATE_DIR" "$reports" || return 1
+    VERIFY_REPORT=$(mktemp "$reports/$(date +%Y%m%d-%H%M%S).XXXXXX") || return 1
+    mv "$VERIFY_REPORT" "$VERIFY_REPORT.txt" || return 1
+    VERIFY_REPORT="$VERIFY_REPORT.txt"
+    chmod 600 "$VERIFY_REPORT" || return 1
+    VERIFY_EXTERNAL=unconfirmed
+    verification_collect > "$VERIFY_REPORT" || return 1
+    cat "$VERIFY_REPORT"
+    if [[ $VERIFY_FAILURES -eq 0 && $VERIFY_PENDING -eq 0 && $NON_INTERACTIVE -eq 0 && $ASSUME_YES -eq 0 && -t 0 ]]; then
+        echo
+        info "$(ui 'Prueba desde OTRA terminal una conexión nueva con clave al puerto definitivo:' 'From ANOTHER terminal test a fresh key login on the final port:')"
+        address="${PUBLIC_IP:-$(audit_session_ip)}"
+        address="${address:-DIRECCION_DEL_VPS}"
+        printf '  ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -p %s %s@%s\n' \
+            "$(current_ssh_port)" "$USERNAME" "$address"
+        info "$(ui 'En la nueva sesión ejecuta sudo -v && sudo -l y prueba los servicios que necesitas.' 'In the new session run sudo -v && sudo -l and test the services you need.')"
+        if read -rp "$(ui 'Si acceso, sudo y servicios funcionan, escribe acceso-ok (otra cosa deja pendientes): ' 'If access, sudo and services work, type access-ok (anything else leaves pending): ')" token && token_ok "$token"; then
+            VERIFY_EXTERNAL=confirmed
+            # Nunca reutilizar un resultado anterior a la confirmación: un timer,
+            # un reinicio o un cambio concurrente puede haber alterado el servidor.
+            verification_collect > "$VERIFY_REPORT" || return 1
+            if [[ $VERIFY_FAILURES -gt 0 || $VERIFY_PENDING -gt 0 ]]; then
+                info "$(ui 'El estado cambió durante la confirmación; estas son las comprobaciones actuales:' 'The state changed during confirmation; these are the current checks:')"
+                cat "$VERIFY_REPORT"
+            fi
+        fi
+    fi
+    verification_result || rc=$?
+    {
+        printf '\n%s: %s\n' "$(ui 'Resultado' 'Result')" "$VERIFY_STATUS"
+        printf '%s: %s; %s: %s\n' "$(ui 'Fallos' 'Failures')" "$VERIFY_FAILURES" "$(ui 'Pendientes técnicos' 'Technical pending')" "$VERIFY_PENDING"
+        printf '%s: %s\n' "$(ui 'Acceso, sudo y servicios externos (declaración del usuario)' 'External access, sudo and services (user declaration)')" \
+            "$( [[ "$VERIFY_EXTERNAL" == confirmed ]] && ui 'confirmados' 'confirmed' || ui 'sin confirmar' 'unconfirmed')"
+        printf '%s\n' "$(ui 'Solo se verificó el perfil indicado y el contexto SSH mostrado; no se cambiaron configuraciones ni temporizadores.' 'Only the stated profile and displayed SSH context were checked; no configurations or timers were changed.')"
+    } >> "$VERIFY_REPORT" || return 1
+    echo
+    printf '%s: %s\n' "$(ui 'Resultado' 'Result')" "$VERIFY_STATUS"
+    printf '%s: %s\n' "$(ui 'Reporte guardado' 'Report saved')" "$VERIFY_REPORT"
+    if [[ $rc -ne 0 ]]; then
+        info "$(ui 'Revisa los pendientes/fallos del reporte y repite la verificación; el acceso externo requiere confirmación humana.' 'Review pending items/failures in the report and repeat verification; external access requires human confirmation.')"
+    fi
+    return "$rc"
+}
+
+offer_final_verification() {
+    local answer=""
+    if [[ $NON_INTERACTIVE -eq 1 || $ASSUME_YES -eq 1 || ! -t 0 ]]; then
+        info "$(ui 'Verificación opcional disponible en el menú (13) o con --verify --user NOMBRE.' 'Optional verification is available in menu (13) or with --verify --user NAME.')"
+        return 0
+    fi
+    read -rp "$(ui '¿Quieres verificar ahora el hardening aplicado? [S/n] ' 'Verify the applied hardening now? [Y/n] ')" answer || return 0
+    case "$answer" in
+        ""|s|S|y|Y) verification_run ;;
+        *) return 0 ;;
+    esac
+}
+
+# ============================================================
 # MENÚ PRINCIPAL
 # ============================================================
 # Solo cuentas atrás que AÚN van a disparar (--state=active): al cumplir, el
@@ -3009,6 +3384,7 @@ main_menu() {
  10) $(ui "Cancelar cuenta atrás pendiente" "Cancel a pending countdown")
  11) $(ui "Revertir al último snapshot" "Revert to the latest snapshot")
  12) $(ui "Auditar el estado sin tocar nada" "Audit the state without touching anything")
+ 13) $(ui "Verificar el hardening aplicado y guardar reporte" "Verify applied hardening and save a report")
   0) $(ui "Salir" "Exit")
 EOF
         echo
@@ -3021,6 +3397,7 @@ EOF
                     error "$(ui "Proceso incompleto; la cuenta atrás pendiente revierte sola si no la cancelas." "Process incomplete; the pending countdown reverts on its own unless you cancel it.")"
                 fi
                 final_summary
+                offer_final_verification || true
                 pause
                 ;;
             2) fase_1_user || pause ;;
@@ -3034,6 +3411,7 @@ EOF
             10) cancel_all_rollbacks; pause ;;
             11) restore_last_snapshot; pause ;;
             12) audit_report; pause ;;
+            13) verification_run || true; pause ;;
             0) echo "$(ui "Saliendo..." "Exiting...")"; exit 0 ;;
             *) warn "$(ui "Opción no válida." "Invalid option.")"; sleep 1 ;;
         esac
@@ -3067,6 +3445,11 @@ main() {
     if [[ $AUDIT_MODE -eq 1 ]]; then
         audit_report
         exit 0
+    fi
+    if [[ $VERIFY_MODE -eq 1 ]]; then
+        local verify_rc=0
+        verification_run || verify_rc=$?
+        exit "$verify_rc"
     fi
     check_original_user
     detect_session_kind
@@ -3107,6 +3490,7 @@ main() {
             exit 1
         fi
         final_summary
+        offer_final_verification || return $?
     else
         main_menu
     fi

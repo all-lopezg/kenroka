@@ -38,7 +38,7 @@ terminal para la prueba de acceso SSH.
 
 El one-liner lanza directo el asistente guiado. Si prefieres elegir fases sueltas, o
 ver el estado sin cambiar nada, descarga el script y corrélo sin argumentos: el menú
-ofrece las 12 acciones.
+ofrece las 13 acciones.
 
 ```bash
 curl -fsSL -o secure-vps.sh \
@@ -54,6 +54,41 @@ escribe ningún archivo y no hace ninguna petición saliente.
 ```bash
 sudo bash secure-vps.sh --audit > auditoria.txt
 ```
+
+## Verificar el hardening aplicado
+
+Al terminar todas las fases, el asistente ofrece una verificación opcional. También
+puedes abrirla desde la opción **13** del menú o ejecutarla después:
+
+```bash
+sudo bash secure-vps.sh --verify --user miadmin
+# Opcional: exigir el puerto y la política sudo elegidos.
+sudo bash secure-vps.sh --verify --user miadmin --port 2222 --sudo prompt
+```
+
+Comprueba el administrador, la clave y sus permisos, la política sudo efectiva,
+SSH y sus puertos de escucha, UFW, el jail y los puertos de Fail2ban, las
+actualizaciones automáticas y las reversiones pendientes o fallidas. Cada ejecución
+guarda un reporte con fecha, equipo, versión, contexto SSH y resultados en
+`/var/lib/secure-vps/reports/`, accesible solo por root (directorio `700`, archivo `600`).
+La verificación no aplica configuraciones ni cancela cuentas atrás.
+
+Si todas las comprobaciones técnicas pasan, pide abrir **otra conexión SSH** con
+clave, probar `sudo -v && sudo -l` y los servicios necesarios desde tu equipo, y
+confirmarlo escribiendo `acceso-ok`. Después vuelve a comprobar el estado técnico.
+El reporte distingue esa declaración del usuario de las comprobaciones del servidor.
+
+| Resultado | Código de salida | Significado |
+|---|---|---|
+| EXITOSO | `0` | Comprobaciones técnicas aprobadas y prueba externa confirmada. |
+| CON PENDIENTES | `2` | Falta la confirmación externa o hay puntos que revisar. |
+| CON FALLOS | `1` | Se detectó un fallo o no se pudo completar la verificación. |
+
+`--yes`, `--non-interactive` o una entrada sin terminal nunca confirman la prueba
+externa: incluso con todas las comprobaciones técnicas aprobadas, el resultado será
+pendiente. Las políticas personalizadas que no se puedan verificar se señalan para
+revisión. El resultado corresponde al perfil y contexto SSH mostrados, no certifica
+todos los posibles clientes ni la seguridad completa del servidor.
 
 ## Qué hace
 
@@ -130,12 +165,13 @@ sudo bash secure-vps.sh --help
 
 | Opción | Significado |
 |---|---|
-| `--non-interactive` | Para Ansible o CI. Exige `--user`, `--pubkey-file` y `--sudo`. |
+| `--non-interactive` | Para Ansible o CI. Al aplicar hardening exige `--user`, `--pubkey-file` y `--sudo`. |
 | `--skip-lockdown` | Prepara el servidor sin el cierre de acceso definitivo. |
 | `--allow-lockdown` | Cierra el acceso sin la confirmación humana. Úsalo entendiendo las implicaciones de recuperación. |
 | `--upgrade` / `--no-upgrade` | Aplicar, o solo reportar, las actualizaciones pendientes. |
 | `--lang es\|en` | Fuerza el idioma detectado. |
 | `--audit` | Reporte de estado de solo lectura: qué está abierto, qué está expuesto y qué correr después. |
+| `--verify --user NOMBRE` | Verificación posterior con reporte privado; códigos `0` exitoso, `2` pendiente, `1` fallo. |
 
 > El cierre automatizado puede dejarte sin acceso SSH si la configuración resultante es incorrecta.
 
@@ -144,10 +180,11 @@ sudo bash secure-vps.sh --help
 La suite corre el script contra systemd real en contenedor, en Ubuntu 22.04 y 24.04.
 Cubre el cierre y el rollback, la cuenta atrás disparando de verdad, el cambio de
 puerto y sus conflictos, la idempotencia byte a byte, el flujo guiado de primera
-vez, el aviso de puertos UDP y el rescate desde el menú.
+vez, el aviso de puertos UDP, el rescate desde el menú y la verificación final con
+confirmación humana, permisos del reporte y detección de servicios caídos.
 
-- **20** escenarios end-to-end
-- **286** asertos unitarios
+- **21** escenarios end-to-end
+- **330** asertos unitarios
 - **17** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash

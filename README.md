@@ -38,7 +38,7 @@ ready for the SSH access test.
 
 The one-liner launches the guided assistant directly. If you prefer to choose
 individual phases, or to inspect the current state without making changes, download
-the script and run it without arguments — the menu provides all 12 actions:
+the script and run it without arguments — the menu provides all 13 actions:
 
 ```bash
 curl -fsSL -o secure-vps.sh \
@@ -54,6 +54,41 @@ file and makes no outbound request.
 ```bash
 sudo bash secure-vps.sh --audit > audit.txt
 ```
+
+## Verify the applied hardening
+
+After all phases finish, the assistant offers an optional verification. You can
+also select menu option **13** or run it later:
+
+```bash
+sudo bash secure-vps.sh --verify --user myadmin
+# Optional: require the chosen port and sudo policy.
+sudo bash secure-vps.sh --verify --user myadmin --port 2222 --sudo prompt
+```
+
+It checks the administrator, key and permissions, effective sudo policy, SSH and
+its listening ports, UFW, the Fail2ban jail and action ports, automatic updates,
+and pending or failed rollbacks. Each run saves a report with the date, host,
+version, SSH context and results in `/var/lib/secure-vps/reports/`, accessible only
+to root (directory `700`, file `600`). Verification does not apply configuration
+or cancel countdowns.
+
+If all technical checks pass, it asks you to open **another SSH connection** with
+your key, test `sudo -v && sudo -l` and the services you need from your computer,
+then confirm with `access-ok`. It checks the technical state again afterwards.
+The report distinguishes this user declaration from the server checks.
+
+| Result | Exit code | Meaning |
+|---|---|---|
+| SUCCESSFUL | `0` | Technical checks passed and the external test was confirmed. |
+| PENDING | `2` | External confirmation is missing or some items need review. |
+| FAILED | `1` | A failure was detected or verification could not complete. |
+
+`--yes`, `--non-interactive` or input without a terminal never confirm the external
+test: even when all technical checks pass, the result remains pending. Custom
+policies that cannot be verified are flagged for review. The result covers the
+displayed profile and SSH context; it does not certify every possible client or
+the server's overall security.
 
 ## What it does
 
@@ -130,12 +165,13 @@ sudo bash secure-vps.sh --help
 
 | Option | Meaning |
 |---|---|
-| `--non-interactive` | For Ansible or CI. Requires `--user`, `--pubkey-file` and `--sudo`. |
+| `--non-interactive` | For Ansible or CI. Applying hardening requires `--user`, `--pubkey-file` and `--sudo`. |
 | `--skip-lockdown` | Prepares the server without the final access lockdown. |
 | `--allow-lockdown` | Locks down without the human confirmation. Understand the recovery implications first. |
 | `--upgrade` / `--no-upgrade` | Apply, or only report, pending package updates. |
 | `--lang es\|en` | Override the detected language. |
 | `--audit` | Read-only state report: what is open, what is exposed, what to run next. |
+| `--verify --user NAME` | Post-hardening verification with a private report; exit codes `0` successful, `2` pending, `1` failed. |
 
 > Automated lockdown can leave you without SSH access if the resulting configuration is wrong.
 
@@ -144,10 +180,11 @@ sudo bash secure-vps.sh --help
 The suite runs the script against real systemd inside containers, on Ubuntu 22.04 and
 24.04. It covers lockdown and rollback, the access countdown firing for real, port
 changes and conflicts, byte-exact idempotency, the guided first-run flow, UDP warnings,
-recovery through the menu, and the read-only mode leaving no trace on disk.
+recovery through the menu, the read-only mode leaving no trace on disk, and final
+verification with human confirmation, report permissions and stopped-service detection.
 
-- **20** end-to-end scenarios
-- **286** unit assertions
+- **21** end-to-end scenarios
+- **330** unit assertions
 - **17** installer assertions, including refusing a tampered file and a foreign signature
 
 ```bash
