@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.1.2
+# Versión: 1.1.3
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.1.2"
+readonly SCRIPT_VERSION="1.1.3"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -49,6 +49,7 @@ RUN_ALL=0
 CURRENT_PORT=22
 SNAP_DIR=""
 ROLLBACK_JOB=""
+ROLLBACK_SNAP_DIR=""     # snapshot fijo de la cuenta atrás, independiente de SNAP_DIR
 ROLLBACK_ARMED=0
 ROLLBACK_MINUTES=10
 SUDO_MODE=""            # prompt | nopasswd | keep
@@ -708,6 +709,10 @@ snapshot_state() {
         error "$(ui "Hay un rollback pendiente de otra ejecución; no iniciaré otro cambio." "A rollback from another run is pending; I will not start another change.")"
         return 1
     fi
+    if [[ $ROLLBACK_ARMED -eq 1 ]] && ! rollback_snapshot_open "$ROLLBACK_SNAP_DIR"; then
+        error "$(ui "La cuenta atrás ya revirtió o está revirtiendo; no iniciaré otra fase." "The countdown has rolled back or is rolling back; I will not start another phase.")"
+        return 1
+    fi
     ensure_sshd_runtime && sshd -t || return 1
     mkdir -p "$SNAPSHOTS_DIR" || return 1
     chmod 700 "$STATE_DIR" "$SNAPSHOTS_DIR" || return 1
@@ -802,6 +807,7 @@ pgrep -x sshd >/dev/null
 port=$(<"$SNAP/port")
 ss -Htln | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}'
 touch "$SNAP/REVERTED"
+rm -f "$SNAP/ROLLING_BACK" "$SNAP/ROLLBACK_FAILED"
 printf 'Rollback completado: %s\n' "$SNAP"
 ROLLBACK_EOF
     chmod 0755 "$ROLLBACK_BIN" || return 1
@@ -831,6 +837,7 @@ arm_rollback() {
     ROLLBACK_JOB="secure-vps-rollback-$(basename "$SNAP_DIR")"
     if systemd-run --unit="$ROLLBACK_JOB" --on-active="${ROLLBACK_MINUTES}m" --timer-property=AccuracySec=1s \
             "$ROLLBACK_BIN" "$SNAP_DIR" >> "$LOG_FILE" 2>&1; then
+        ROLLBACK_SNAP_DIR="$SNAP_DIR"
         ROLLBACK_ARMED=1
         warn "$(ui "Cuenta atrás armada: en ${ROLLBACK_MINUTES}m todo vuelve atrás solo." "Countdown armed: in ${ROLLBACK_MINUTES}m everything rolls back on its own.")"
         info "$(ui "Al confirmar el acceso se cancela, o a mano (ojo: stop, no cancel):" "Confirming access cancels it, or manually (note: stop, not cancel):")"
@@ -842,15 +849,28 @@ arm_rollback() {
     fi
 }
 
+# Leer estas marcas bajo el lock para confirmar o modificar un estado pendiente.
+rollback_snapshot_open() {
+    local snap="$1"
+    [[ -n "$snap" && -f "$snap/READY" && ! -f "$snap/CONFIRMED" &&
+       ! -f "$snap/ROLLING_BACK" && ! -f "$snap/REVERTED" &&
+       ! -f "$snap/ROLLBACK_FAILED" ]]
+}
+
+# Un callback opcional finaliza el puerto dentro del mismo lock que el rollback.
+# CONFIRMED solo se escribe si terminó bien; si falla, el timer sigue protegiendo.
 disarm_rollback() {
     [[ $ROLLBACK_ARMED -eq 1 ]] || return 0
     if ! (
-        exec 8>"$SNAP_DIR/lock" || exit 1
+        exec 8>"$ROLLBACK_SNAP_DIR/lock" || exit 1
         flock -x 8 || exit 1
-        [[ ! -f "$SNAP_DIR/ROLLING_BACK" ]] || exit 1
-        touch "$SNAP_DIR/CONFIRMED"
+        rollback_snapshot_open "$ROLLBACK_SNAP_DIR" || exit 1
+        if [[ $# -gt 0 ]]; then
+            "$@" || exit 1
+        fi
+        touch "$ROLLBACK_SNAP_DIR/CONFIRMED" || exit 1
     ); then
-        error "$(ui "El rollback ya comenzó o no pude registrar la confirmación. No continuaré." "The rollback already started or the confirmation could not be recorded. I will not continue.")"
+        error "$(ui "No pude finalizar la confirmación: el rollback ya comenzó, terminó o la operación falló. No continuaré." "Could not finish confirmation: rollback already started, completed, or the operation failed. I will not continue.")"
         return 1
     fi
     if kill_rollback_timer "$ROLLBACK_JOB"; then
@@ -858,10 +878,7 @@ disarm_rollback() {
         success "$(ui "Cuenta atrás cancelada. Los cambios son permanentes." "Countdown cancelled. The changes are permanent.")"
         log "rollback cancelado: $ROLLBACK_JOB"
     else
-        # Si el timer sigue vivo, en N minutos el servidor revierte solo justo
-        # cuando creías que habías confirmado el acceso: hay que decirlo fuerte.
-        error "$(ui "El temporizador $ROLLBACK_JOB.timer SIGUE ARMADO pese a confirmar." "Timer $ROLLBACK_JOB.timer is STILL ARMED despite confirmation.")"
-        error "$(ui "Detenlo ahora a mano: systemctl stop $ROLLBACK_JOB.timer" "Stop it now manually: systemctl stop $ROLLBACK_JOB.timer")"
+        error "$(ui "Los cambios están confirmados, pero no pude detener $ROLLBACK_JOB.timer; su rollback omitirá el snapshot confirmado." "Changes are confirmed, but could not stop $ROLLBACK_JOB.timer; its rollback will skip the confirmed snapshot.")"
         return 1
     fi
 }
@@ -1068,18 +1085,38 @@ fi
 # (el `|| true` es por pipefail: sin el usuario, el pipeline mataría al script)
 password_state() { passwd -S "$1" 2>/dev/null | awk '{print $2}' || true; }
 
-install_sudoers_nopasswd() {
-    local user="$1" file="/etc/sudoers.d/90-$user"
-    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > "$file.tmp" || return 1
+install_sudoers_policy() {
+    local user="$1" tag="$2" file="/etc/sudoers.d/90-$1"
+    case "$tag" in PASSWD|NOPASSWD) ;; *) return 1 ;; esac
+    printf '%s ALL=(ALL) %s:ALL\n' "$user" "$tag" > "$file.tmp" || return 1
     if visudo -cf "$file.tmp" >/dev/null 2>&1; then
-        mv "$file.tmp" "$file"
-        chmod 0440 "$file"
+        chmod 0440 "$file.tmp" || return 1
+        mv "$file.tmp" "$file" || return 1
         success "$(ui "Drop-in instalado en $file" "Drop-in installed at $file")"
     else
         rm -f "$file.tmp"
         error "$(ui "El drop-in de sudoers no pasó visudo; no lo instalé." "The sudoers drop-in failed visudo; not installed.")"
         return 1
     fi
+}
+
+install_sudoers_nopasswd() {
+    install_sudoers_policy "$1" NOPASSWD
+}
+
+install_sudoers_prompt() {
+    local user="$1"
+    install_sudoers_policy "$user" PASSWD || return 1
+    if ! visudo -c >/dev/null 2>&1 || ! sudo -l -U "$user" -- true >/dev/null 2>&1; then
+        error "$(ui "La política sudo efectiva no permite administrar como '$user'. Revisa sudoers antes de continuar." "The effective sudo policy does not allow administration as '$user'. Check sudoers before continuing.")"
+        return 1
+    fi
+    # -k ignora cualquier credencial sudo cacheada para esta comprobación.
+    if runuser -u "$user" -- sudo -k -n true 2>/dev/null; then
+        error "$(ui "Otra regla sudoers permite sudo sin contraseña para '$user'. Revisa sudo -l -U $user; no daré por aplicada la política con contraseña." "Another sudoers rule allows passwordless sudo for '$user'. Check sudo -l -U $user; I will not report the password policy as applied.")"
+        return 1
+    fi
+    success "$(ui "Comprobado: sudo de '$user' exige contraseña." "Verified: sudo for '$user' requires a password.")"
 }
 
 ask_sudo_mode() {
@@ -1114,7 +1151,7 @@ ensure_usable_sudo() {
             ;;
         prompt)
             if [[ "$state" == "P" ]]; then
-                success "$(ui "$user ya tiene contraseña: sudo la pedirá y listo." "$user already has a password: sudo will just ask for it.")"
+                info "$(ui "$user ya tiene contraseña utilizable." "$user already has a usable password.")"
             elif [[ $NON_INTERACTIVE -eq 1 || ! -t 0 ]]; then
                 error "$(ui "'$user' está sin contraseña usable (estado '$state') y no puedo pedirla aquí." "'$user' has no usable password (state '$state') and I cannot prompt for it here.")"
                 error "$(ui "Repite con --sudo nopasswd, o ponla a mano: sudo passwd $user" "Retry with --sudo nopasswd, or set it manually: sudo passwd $user")"
@@ -1126,6 +1163,7 @@ ensure_usable_sudo() {
                 [[ "$(password_state "$user")" == "P" ]] || { error "$(ui "La contraseña no quedó activa." "The password did not become active.")"; return 1; }
                 success "$(ui "Contraseña de '$user' activa." "Password for '$user' is now active.")"
             fi
+            install_sudoers_prompt "$user" || return 1
             ;;
         keep)
             if ! runuser -u "$user" -- sudo -n true 2>/dev/null && [[ "$state" != P ]]; then
@@ -1641,18 +1679,22 @@ confirm_access() {
 revert_now() {
     local reason="$1"
     error "$reason"
-    if [[ -z "$SNAP_DIR" || ! -f "$SNAP_DIR/READY" ]]; then
+    local target="$SNAP_DIR"
+    if [[ $ROLLBACK_ARMED -eq 1 ]]; then
+        target="$ROLLBACK_SNAP_DIR"
+    fi
+    if [[ -z "$target" || ! -f "$target/READY" ]]; then
         error "$(ui "No hay snapshot válido; no borraré configuración existente. Usa la consola del proveedor." "No valid snapshot; I will not delete existing configuration. Use the provider console.")"
         return 1
     fi
     install_rollback_bin || return 1
-    info "$(ui "Revirtiendo desde $SNAP_DIR" "Reverting from $SNAP_DIR")"
-    if "$ROLLBACK_BIN" "$SNAP_DIR"; then
+    info "$(ui "Revirtiendo desde $target" "Reverting from $target")"
+    if "$ROLLBACK_BIN" "$target"; then
         if [[ $ROLLBACK_ARMED -eq 1 ]]; then
             kill_rollback_timer "$ROLLBACK_JOB" || return 1
             ROLLBACK_ARMED=0
         fi
-        warn "$(ui "Configuración restaurada desde $SNAP_DIR." "Configuration restored from $SNAP_DIR.")"
+        warn "$(ui "Configuración restaurada desde $target." "Configuration restored from $target.")"
     else
         error "$(ui "El rollback pidió atención manual: usa la consola VNC del proveedor." "The rollback needs manual attention: use the provider VNC console.")"
         return 1
@@ -2194,7 +2236,7 @@ fase_7_change_port() {
     echo
     if [[ $NON_INTERACTIVE -eq 1 ]]; then
         if [[ $drop_old -eq 1 ]]; then
-            finalize_old_port_removal || return 1
+            confirm_port_change || return 1
         else
             info "$(ui "Puerto $CURRENT_PORT sigue abierto: ciérralo tú cuando verifiques." "Port $CURRENT_PORT is still open: close it yourself once you verify.")"
         fi
@@ -2202,8 +2244,7 @@ fase_7_change_port() {
         local token=""
         read -rp "$(ui "Si entró por $NEW_PORT, escribe acceso-ok (otra cosa revierte): " "If you got in via $NEW_PORT, type access-ok (anything else reverts): ")" token
         if token_ok "$token"; then
-            finalize_old_port_removal || return 1
-            disarm_rollback || return 1
+            confirm_port_change || return 1
         else
             revert_now "$(ui "Sin confirmación, vuelvo al puerto $CURRENT_PORT." "Without confirmation, back to port $CURRENT_PORT.")"
             return 1
@@ -2214,30 +2255,41 @@ fase_7_change_port() {
     pause
 }
 
+confirm_port_change() {
+    if [[ $ROLLBACK_ARMED -eq 1 ]]; then
+        if ! disarm_rollback finalize_old_port_removal; then
+            if [[ ! -f "$ROLLBACK_SNAP_DIR/CONFIRMED" ]]; then
+                revert_now "$(ui "No se pudo confirmar el puerto; restauro el estado pendiente." "Could not confirm the port; restoring the pending state.")" || return 1
+            fi
+            return 1
+        fi
+    elif ! finalize_old_port_removal; then
+        revert_now "$(ui "Falló el cambio al puerto definitivo." "Switching to the final port failed.")" || return 1
+        return 1
+    fi
+}
+
 finalize_old_port_removal() {
     info "$(ui "Quitando el puerto $CURRENT_PORT..." "Removing port $CURRENT_PORT...")"
-    hardening_set_ports "$NEW_PORT" || { revert_now "$(ui "No pude escribir el puerto definitivo." "Could not write the final port.")"; return 1; }
+    hardening_set_ports "$NEW_PORT" || return 1
     if [[ $SOCKET_ACTIVATED -eq 1 ]] && ! has_socket_generator; then
-        socket_dropin_write "$NEW_PORT" || { revert_now "No pude actualizar el socket."; return 1; }
+        socket_dropin_write "$NEW_PORT" || return 1
     fi
-    sshd -t || { revert_now "$(ui "sshd rechaza la config sin el puerto $CURRENT_PORT." "sshd rejects the configuration without port $CURRENT_PORT.")"; return 1; }
+    sshd -t || return 1
     if ! restart_ssh; then
-        revert_now "$(ui "Falló el arranque de SSH en el puerto definitivo." "Starting SSH on the final port failed.")"
         return 1
     fi
     local now_listening
     now_listening=$(listening_ports) || return 1
     if [[ "$now_listening" != "$NEW_PORT " ]]; then
-        revert_now "$(ui "Los listeners reales no coinciden con el puerto solicitado." "The real listeners do not match the requested port.")"
         return 1
     fi
     local alias=""
     [[ "$CURRENT_PORT" == 22 ]] && alias=ssh
-    ufw_purge_port "$CURRENT_PORT" "$alias" || { revert_now "$(ui "No pude retirar la regla anterior." "Could not remove the previous rule.")"; return 1; }
+    ufw_purge_port "$CURRENT_PORT" "$alias" || return 1
     fail2ban_detect_logging
     if command -v fail2ban-client >/dev/null; then
         if ! write_fail2ban_jail "$NEW_PORT" || ! systemctl restart fail2ban; then
-            revert_now "$(ui "No pude actualizar Fail2ban al puerto definitivo." "Could not update Fail2ban to the final port.")"
             return 1
         fi
     fi

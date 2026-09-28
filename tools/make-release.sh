@@ -46,4 +46,4 @@ echo "  gh release create $VERSION secure-vps.sh SHA256SUMS.txt SHA256SUMS.txt.s
 echo "      --title \"secure-vps $VERSION\" --notes-file NOTAS.md"
 echo
 echo "install.sh no se toca: su URL apunta a releases/latest, que moverá el tag nuevo."
-echo "Para congelar una flota en esta versión: KENROKA_VERSION=$VERSION curl -fsSL .../install.sh | bash"
+echo "Para congelar una flota en esta versión: curl -fsSL .../install.sh | KENROKA_VERSION=$VERSION bash"

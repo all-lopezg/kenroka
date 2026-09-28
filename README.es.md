@@ -30,7 +30,7 @@ ejecutar nada.
 Para fijar una versión concreta:
 
 ```bash
-KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | KENROKA_VERSION=vX.Y.Z bash
 ```
 
 Antes de empezar: ten abierta la consola web de tu proveedor y prepara una segunda
@@ -83,6 +83,10 @@ La regla importante es simple:
   4. Confirma el acceso nuevo escribiendo `acceso-ok`.
 - Si la confirmación no llega antes de que expire la cuenta atrás, los cambios se revierten solos.
 - Los cambios de SSH, UFW y Fail2ban dejan snapshots; el menú restaura el más reciente que aún no se haya revertido.
+
+Si una cuenta atrás sigue pendiente al pasar a otra fase, su reversión restaura
+el estado anterior a esa cuenta atrás, incluidos los cambios posteriores de SSH,
+UFW y Fail2ban. Una confirmación que llega después de la reversión se rechaza.
 
 El token sigue el idioma de la interfaz — `acceso-ok` en español, `access-ok` en inglés —
 pero **los dos se aceptan siempre**, para que nadie se quede fuera por una traducción.
@@ -142,9 +146,9 @@ Cubre el cierre y el rollback, la cuenta atrás disparando de verdad, el cambio 
 puerto y sus conflictos, la idempotencia byte a byte, el flujo guiado de primera
 vez, el aviso de puertos UDP y el rescate desde el menú.
 
-- **19** escenarios end-to-end
-- **213** asertos unitarios
-- **9** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
+- **20** escenarios end-to-end
+- **286** asertos unitarios
+- **17** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash
 ./tests/run.sh unit

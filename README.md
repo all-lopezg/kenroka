@@ -30,7 +30,7 @@ resolved before running anything.
 To pin a specific version:
 
 ```bash
-KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | KENROKA_VERSION=vX.Y.Z bash
 ```
 
 Before you start: keep your provider's web console open, and have a second terminal
@@ -83,6 +83,10 @@ The most important rule is simple:
   4. Confirm the new access by typing `acceso-ok`.
 - If the confirmation never arrives before the countdown expires, the changes are reverted automatically.
 - SSH, UFW and fail2ban changes create snapshots; the menu restores the latest one that has not already been reverted.
+
+If a countdown is still pending when another phase runs, its rollback restores
+the state from before that countdown, including later SSH, UFW and fail2ban
+changes. A confirmation arriving after rollback is rejected.
 
 The confirmation token follows the interface language — `acceso-ok` in Spanish, `access-ok`
 in English — but **both are always accepted**, so nobody is locked out by a translation.
@@ -142,9 +146,9 @@ The suite runs the script against real systemd inside containers, on Ubuntu 22.0
 changes and conflicts, byte-exact idempotency, the guided first-run flow, UDP warnings,
 recovery through the menu, and the read-only mode leaving no trace on disk.
 
-- **19** end-to-end scenarios
-- **213** unit assertions
-- **9** installer assertions, including refusing a tampered file and a foreign signature
+- **20** end-to-end scenarios
+- **286** unit assertions
+- **17** installer assertions, including refusing a tampered file and a foreign signature
 
 ```bash
 ./tests/run.sh unit

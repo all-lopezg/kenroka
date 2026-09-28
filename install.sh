@@ -7,7 +7,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
 #
 # Para quedarse en una versión concreta (una flota, un entorno que no cambia):
-#   KENROKA_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | KENROKA_VERSION=vX.Y.Z bash
 #
 # Los flags se reenvían al script tal cual. El que no escribe nada:
 #   curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | sudo bash -s -- --audit

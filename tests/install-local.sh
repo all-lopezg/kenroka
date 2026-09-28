@@ -4,7 +4,11 @@
 # y rechaza lo manipulado. No toca la clave real ni publica nada.
 set -uo pipefail
 
-SRC=/Users/allan/Documents/Proyectos/kenroka
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cada caso controla LANG; LC_ALL no debe ocultar esa selección.
+unset LC_ALL LC_MESSAGES
+LANG=es_ES.UTF-8
+export LANG
 D="$(mktemp -d /tmp/kenroka-inst.XXXXXX)"
 PUB="$D/pub"
 # Un puerto al azar puede chocar con el de una corrida anterior interrumpida
@@ -24,7 +28,9 @@ hasnt() { case "$3" in *"$2"*) bad "$1 | sobra '$2'";; *) ok "$1";; esac; }
 ssh-keygen -t ed25519 -N "" -C "prueba-local" -f "$D/testkey" -q
 cp "$SRC/secure-vps.sh" "$PUB/secure-vps.sh"
 PUBKEY_LINE="$(cut -d' ' -f1,2 "$D/testkey.pub")"
-sed "s|^TRUSTED_KEY=.*|TRUSTED_KEY=\"$PUBKEY_LINE\"|" "$SRC/install.sh" > "$PUB/install.sh"
+sed -e "s|^TRUSTED_KEY=.*|TRUSTED_KEY=\"$PUBKEY_LINE\"|" \
+    -e "s|https://github.com/|http://127.0.0.1:$PORT/|g" \
+    "$SRC/install.sh" > "$PUB/install.sh"
 ( cd "$PUB" && shasum -a 256 secure-vps.sh > SHA256SUMS.txt \
     && ssh-keygen -Y sign -f "$D/testkey" -n file SHA256SUMS.txt >/dev/null )
 
@@ -47,10 +53,8 @@ fi
 # install.sh exige terminal de control: se la damos con un pty. Ojo: pty.spawn
 # se queda esperando entrada de un stdin que aquí no es terminal; con pty.fork
 # el padre lee hasta el EIO de que el hijo murió y devuelve el estado real.
-run_inst() {
-    # El idioma solo se fija si quien llama no lo trajo: los casos de idioma
-    # necesitan traer el suyo propio.
-    LANG="${LANG:-es_ES.UTF-8}" KENROKA_BASE="http://127.0.0.1:$PORT" python3 -c '
+run_in_tty() {
+    python3 -c '
 import os, pty, sys
 cmd = sys.argv[1:]
 pid, fd = pty.fork()
@@ -68,7 +72,12 @@ while True:
 _, st = os.waitpid(pid, 0)
 sys.stdout.write(out.decode(errors="replace"))
 sys.exit(os.waitstatus_to_exitcode(st))
-' bash "$PUB/install.sh" "$@" 2>&1
+' "$@" 2>&1
+}
+
+run_inst() {
+    LANG="${LANG:-es_ES.UTF-8}" KENROKA_BASE="http://127.0.0.1:$PORT" \
+        run_in_tty bash "$PUB/install.sh" "$@"
 }
 
 echo "== caso feliz (el script se ejecuta con --help y sale solo)"
@@ -112,6 +121,20 @@ hasnt "no queda español en el instalador"           "Firma válida" "$out"
 out="$(LANG=C run_inst --help)"
 has "con locale C el instalador cae en inglés" "Resolved version" "$out"
 hasnt "y no dice Versión resuelta"              "Versión resuelta" "$out"
+
+echo "== versión fijada desde el comando documentado"
+RELEASE_VERSION="$(awk -F'"' '/^readonly SCRIPT_VERSION=/{print $2; exit}' "$PUB/secure-vps.sh")"
+PINNED_TAG="v$RELEASE_VERSION"
+PINNED="$PUB/all-lopezg/kenroka/releases/download/$PINNED_TAG"
+mkdir -p "$PINNED"
+cp "$PUB/secure-vps.sh" "$PUB/SHA256SUMS.txt" "$PUB/SHA256SUMS.txt.sig" "$PINNED/"
+# Solo existe esta ruta: latest daría 404. La variable se asigna al bash
+# del instalador, exactamente como en los ejemplos de los README.
+out="$(run_in_tty bash -c 'curl -fsSL "$1" | KENROKA_VERSION="$2" bash -s -- --lang en --help' \
+    _ "http://127.0.0.1:$PORT/install.sh" "$PINNED_TAG")"
+has "usa la ruta de la versión solicitada" "/releases/download/$PINNED_TAG" "$out"
+has "verifica la release fijada" 'Signature valid' "$out"
+has "ejecuta la versión fijada" "Resolved version: $RELEASE_VERSION." "$out"
 
 printf '\n  resultado: %d ok, %d fallas\n' "$PASS" "$FAILN"
 [[ $FAILN -eq 0 ]]
