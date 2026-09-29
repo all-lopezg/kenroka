@@ -192,16 +192,18 @@ changes. A confirmation arriving after rollback is rejected.
 
 ## Verify the signing key
 
-`install.sh` contains an embedded `ssh-ed25519` public key used to verify releases. Its fingerprint is:
+`install.sh` trusts two `ssh-ed25519` public keys: the current key signs releases
+from v1.3.0 onward, and the previous key verifies historical releases.
 
 ```
-256  SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg  kenroka-release (ED25519)
+Current (v1.3.0+): SHA256:H8Dv+fd0O8i6yPVnTlS5WMMs+NuM1/y9YV9Mypf0GoY
+Previous:          SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg
 ```
 
 Do not rely solely on the downloaded copy of the fingerprint: compare it through an
 independent channel before trusting the verification. Releases from v1.1.2 up verify under
-the principal `kenroka`; earlier ones used the repository owner, which is only a label —
-the key and its fingerprint are the same. If you sign releases yourself:
+the principal `kenroka`; earlier ones used the repository owner, which is only a label.
+If you sign releases yourself:
 
 ```bash
 ssh-keygen -lf ~/.ssh/kenroka_sign.pub

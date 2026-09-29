@@ -194,16 +194,18 @@ UFW y Fail2ban. Una confirmación que llega después de la reversión se rechaza
 
 ## Verifica la clave de firma
 
-`install.sh` lleva embebida una clave pública `ssh-ed25519` con la que se verifican las releases. Su huella:
+`install.sh` confía en dos claves públicas `ssh-ed25519`: la actual firma las releases
+desde v1.3.0 y la anterior verifica las releases históricas.
 
 ```
-256  SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg  kenroka-release (ED25519)
+Actual (v1.3.0+): SHA256:H8Dv+fd0O8i6yPVnTlS5WMMs+NuM1/y9YV9Mypf0GoY
+Anterior:         SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg
 ```
 
 No te fíes solo de la copia descargada de la huella: contrástala por un canal
 independiente antes de fiarte de la verificación. Desde v1.1.2 las releases se verifican
 con el principal `kenroka`; las anteriores usaban el nombre del dueño del repositorio, que
-es solo una etiqueta — la clave y su huella son las mismas. Si firmas tú las releases:
+es solo una etiqueta. Si firmas tú las releases:
 
 ```bash
 ssh-keygen -lf ~/.ssh/kenroka_sign.pub

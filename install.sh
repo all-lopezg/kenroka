@@ -37,10 +37,12 @@ fi
 # dependa de una persona.
 IDENTITY="kenroka"
 
-# Clave pública con la que se firma SHA256SUMS.txt de cada release. Contrasta
-# su huella por un canal distinto al de la descarga antes de fiarte:
-#   SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg  kenroka-release (ED25519)
-TRUSTED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICr4W9Fle/TgTmrKBKpRh5SVXYu19VlrGv99bFpWRYPb kenroka-release"
+# Clave pública actual de firma y clave anterior para verificar releases ya
+# publicadas antes de la rotación. Contrasta ambas huellas por otro canal.
+# Actual (v1.3.0+): SHA256:H8Dv+fd0O8i6yPVnTlS5WMMs+NuM1/y9YV9Mypf0GoY
+# Anterior:          SHA256:HHGNTv5xODpeL2dDmFZFCatrDfiFWHSzwbO3WjISAEg
+TRUSTED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIRtvhOig6F0XlrD2RCk+emhqO58B6HEd9yftKqnebXy kenroka-release"
+TRUSTED_KEY_PREVIOUS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICr4W9Fle/TgTmrKBKpRh5SVXYu19VlrGv99bFpWRYPb kenroka-release"
 
 # Mismo idioma que va a hablar secure-vps.sh: la detección es la suya (locale del
 # sistema, es* => español) y un --lang reenviado manda sobre las dos cosas. Si no,
@@ -113,7 +115,10 @@ done
 RESOLVED="$(awk -F'"' '/^readonly SCRIPT_VERSION=/{print $2; exit}' "${WORK}/secure-vps.sh")"
 RESOLVED="${RESOLVED:-desconocida}"
 
-printf '%s namespaces="file" %s\n' "$IDENTITY" "$TRUSTED_KEY" > "${WORK}/allowed_signers"
+{
+    printf '%s namespaces="file" %s\n' "$IDENTITY" "$TRUSTED_KEY"
+    printf '%s namespaces="file" %s\n' "$IDENTITY" "$TRUSTED_KEY_PREVIOUS"
+} > "${WORK}/allowed_signers"
 chmod 600 "${WORK}/allowed_signers"
 
 if ! ssh-keygen -Y verify -f "${WORK}/allowed_signers" -I "$IDENTITY" -n file \
