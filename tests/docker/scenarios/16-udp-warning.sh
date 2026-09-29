@@ -21,7 +21,7 @@ printf '%s\n' "$out" | grep -E 'escucha|puertos:' | head -4 | sed 's/^/    > /'
 expect_eq "termina bien" 0 "$rc"
 expect_match "lista el riesgo del TCP 80" "sudo ufw allow 80/tcp" "$out"
 expect_match "lista el riesgo del UDP 5353" "sudo ufw allow 5353/udp" "$out"
-expect_match "el aviso agrupa ambos protocolos" "estos puertos: 80 5353" "$out"
+expect_match "el aviso agrupa ambos protocolos" "forma deliberada: 80 5353" "$out"
 expect_match "UFW quedó activo" "Status: active" "$(ufw_active)"
 expect_nomatch "con --yes el 5353/udp sigue filtrado" "5353/udp" "$(ufw_dump)"
 expect_nomatch "y el 80/tcp también" "80/tcp" "$(ufw_dump)"

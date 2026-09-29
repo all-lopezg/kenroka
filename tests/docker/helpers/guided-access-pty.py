@@ -2,6 +2,7 @@
 """Drive the guided checkpoints only after a real client SSH + sudo test."""
 import os
 import pty
+import signal
 import subprocess
 import sys
 
@@ -24,11 +25,17 @@ client_test = base + [
     "tester@server 'whoami && sudo -n true'",
 ]
 
+# Un cuelgue debe fallar en minutos, no en horas: si ningún checkpoint llega en
+# 10 minutos, el driver muere y el escenario falla en vez de esperar sin fin.
+signal.alarm(600)
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp(command[0], command)
 
-marker = "¿La prueba funcionó?".encode()
+# El prompt de `read -p` no se imprime cuando el stdin del contenedor es una
+# tubería (docker compose exec -T), así que sincronizar con la pregunta cuelga
+# al driver. Cada checkpoint imprime esta advertencia justo antes de preguntar.
+marker = "NO valida esta prueba SSH externa.".encode()
 output = b""
 answered = 0
 failed = False

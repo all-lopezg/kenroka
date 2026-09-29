@@ -89,7 +89,7 @@ out5="$(run_vps_in '12\n\n0\n' --skip-lockdown --user tester \
         --pubkey-file /keys/id_ed25519.pub --sudo nopasswd --experto 2>&1)"
 expect_eq "el menú la ofrece" 0 "$?"
 expect_match "se ve el reporte desde el menú" "AUDITORÍA DE SOLO LECTURA" "$out5"
-expect_match "y el menu sigue disponible despues" "Revertir al último snapshot" "$out5"
+expect_match "y el menu sigue disponible despues" "Restaurar el último snapshot de acceso" "$out5"
 
 echo "  sobre un VPS ya endurecido (misma auditoría, otro diagnóstico)"
 start_admin_session
