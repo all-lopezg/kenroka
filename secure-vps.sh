@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.1.3
+# Versión: 1.3.0
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.2.0"
+readonly SCRIPT_VERSION="1.3.0"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -61,6 +61,11 @@ FAIL2BAN_BACKEND=""     # systemd | auto
 FAIL2BAN_LOGPATH=""
 JAIL_LOCAL="/etc/fail2ban/jail.d/99-secure-vps.local"
 KEY_READY=0
+KEY_TESTED=0              # una conexión con clave fue probada antes del cierre
+USER_CREATED_THIS_RUN=0   # evita sugerir ssh-copy-id a una cuenta sin contraseña SSH
+ACCESS_TEST_CONFIRMED=0   # confirmación humana de esta ejecución, no un estado persistente
+RECOVERY_OCCURRED=0       # el último cambio de acceso de esta ejecución fue restaurado
+RECOVERY_REASON=""
 # ask = preguntar en interactivo; yes con --upgrade; no con --no-upgrade.
 # En modo desatendido solo se aplica con --upgrade explícito: un apt upgrade de
 # varios minutos no lo decide un pipeline en silencio.
@@ -106,6 +111,7 @@ fi
 # overridable con --lang. ui() devuelve el texto en el idioma activo y SIEMPRE
 # devuelve algo: si falta la traducción, cae al texto en español.
 UI_LANG="en"
+UI_LANG_EXPLICIT=0
 ui_lang_detect() {
     case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
         es*) UI_LANG="es" ;;
@@ -142,21 +148,6 @@ confirm_labels() {
     else
         printf '%s' "[y/n]: "
     fi
-}
-
-# El token de acceso se imprime en el idioma de la interfaz, pero se aceptan
-# los dos: quien sigue una guía en el otro idioma, o un tercero que mira la
-# captura de otra persona, no debe quedarse fuera por una traducción.
-access_token() {
-    if [[ $UI_LANG == es ]]; then
-        printf '%s' "acceso-ok"
-    else
-        printf '%s' "access-ok"
-    fi
-}
-
-token_ok() {
-    [[ "$1" == "acceso-ok" || "$1" == "access-ok" ]]
 }
 
 confirm() {
@@ -198,6 +189,47 @@ pause() {
         return 0
     fi
     read -rp "$(echo -e "${CYAN}$(ui "Presiona Enter para continuar..." "Press Enter to continue...")${NC}")" || true
+}
+
+# Las fases guiadas siguen siempre el mismo orden. Así una persona sabe qué
+# cambiará el script antes de que aparezca una pregunta y qué acción concreta
+# se espera de ella. En modo experto se conservan las salidas cortas.
+phase_guide() {
+    local number="$1" title_es="$2" title_en="$3" change_es="$4" change_en="$5"
+    local action_es="$6" action_en="$7" protection_es="${8:-}" protection_en="${9:-}"
+    guided_active || return 0
+    echo
+    echo "  ${BOLD}[$number] $(ui "$title_es" "$title_en")${NC}"
+    echo "  ${CYAN}$(ui "Qué se hará:" "What will happen:")${NC} $(ui "$change_es" "$change_en")"
+    echo "  ${CYAN}$(ui "Qué debes hacer ahora:" "What you must do now:")${NC} $(ui "$action_es" "$action_en")"
+    if [[ -n "$protection_es$protection_en" ]]; then
+        echo "  ${CYAN}$(ui "Protección:" "Protection:")${NC} $(ui "$protection_es" "$protection_en")"
+    fi
+    echo
+}
+
+# La elección inicial no puede depender solo del locale del VPS: ese locale
+# describe al servidor, no necesariamente a quien lo administra. Solo se
+# muestra en un TTY y en modo guiado; automatización y pruebas con stdin no
+# consumen una respuesta adicional.
+choose_ui_language() {
+    local answer=""
+    [[ $GUIDED -eq 1 && $UI_LANG_EXPLICIT -eq 0 && $NON_INTERACTIVE -eq 0 && -t 0 ]] || return 0
+    echo
+    echo "  Selecciona el idioma / Choose your language"
+    echo "    1) Español"
+    echo "    2) English"
+    while true; do
+        if ! read -rp "  [1/2] ($( [[ $UI_LANG == es ]] && printf '1' || printf '2' )): " answer; then
+            return 0
+        fi
+        case "${answer:-}" in
+            "") return 0 ;;
+            1|es|ES|Español|español) UI_LANG=es; return 0 ;;
+            2|en|EN|English|english)    UI_LANG=en; return 0 ;;
+            *) echo "  Escribe 1 o 2 / Type 1 or 2." ;;
+        esac
+    done
 }
 
 # ============================================================
@@ -279,7 +311,7 @@ check_original_user() {
         info "$(ui "  · La fase 1 crea un usuario administrador con sudo." "  · Phase 1 creates an admin user with sudo.")"
         info "$(ui "  · La fase 2 instala TU clave pública y comprueba que sshd la acepta." "  · Phase 2 installs YOUR public key and checks sshd accepts it.")"
         info "$(ui "  · No se cierra root ni la contraseña hasta que entres con ese usuario" "  · Root and password are not closed until you log in as that user")"
-        info "$(ui "    desde OTRA terminal y escribas acceso-ok. Si no puedes, revierte solo." "    from ANOTHER terminal and type access-ok. If you cannot, it reverts on its own.")"
+        info "$(ui "    desde OTRA terminal y marques que funcionó con 's'. Si no puedes, eliges restaurar." "    from ANOTHER terminal and mark that it worked with 'y'. If it does not, choose restore.")"
         local q_usuario q_en
         if [[ -n "$USERNAME" ]]; then
             q_usuario="¿Creo ahora el usuario '$USERNAME' y sigo con el endurecido?"
@@ -545,7 +577,7 @@ parse_args() {
             --audit)           AUDIT_MODE=1; NON_INTERACTIVE=1; shift ;;
             --verify)          VERIFY_MODE=1; shift ;;
             --lang)            require_val "$@"
-                               case "$2" in es|en) UI_LANG="$2";; *) error "$(ui "Idioma no soportado: usa --lang es o --lang en" "Unsupported language: use --lang es or --lang en")"; exit 1;; esac
+                               case "$2" in es|en) UI_LANG="$2"; UI_LANG_EXPLICIT=1;; *) error "$(ui "Idioma no soportado: usa --lang es o --lang en" "Unsupported language: use --lang es or --lang en")"; exit 1;; esac
                                shift 2 ;;
             --help|-h)         usage; exit 0 ;;
             *)                 error "$(ui "Opción desconocida: $1" "Unknown option: $1")"; usage; exit 1 ;;
@@ -858,9 +890,9 @@ arm_rollback() {
             "$ROLLBACK_BIN" "$SNAP_DIR" >> "$LOG_FILE" 2>&1; then
         ROLLBACK_SNAP_DIR="$SNAP_DIR"
         ROLLBACK_ARMED=1
-        warn "$(ui "Cuenta atrás armada: en ${ROLLBACK_MINUTES}m todo vuelve atrás solo." "Countdown armed: in ${ROLLBACK_MINUTES}m everything rolls back on its own.")"
-        info "$(ui "Al confirmar el acceso se cancela, o a mano (ojo: stop, no cancel):" "Confirming access cancels it, or manually (note: stop, not cancel):")"
-        echo "    systemctl stop $ROLLBACK_JOB.timer"
+        warn "$(ui "Protección temporal activa: tienes ${ROLLBACK_MINUTES} min para comprobar el acceso desde otra terminal." "Temporary protection active: you have ${ROLLBACK_MINUTES} min to check access from another terminal.")"
+        info "$(ui "Si la prueba no funciona o no estás seguro, elige restaurar. Si no respondes, se restaurarán solos SSH, UFW y Fail2ban." "If the test does not work or you are unsure, choose restore. If you do not respond, SSH, UFW and Fail2ban restore themselves.")"
+        info "$(ui "Al confirmar que funciona, esta protección se cancela automáticamente. No tienes que ejecutar ningún comando ahora." "When you confirm it works, this protection is cancelled automatically. You do not need to run any command now.")"
         log "rollback armado en $ROLLBACK_JOB (${ROLLBACK_MINUTES}m) -> $SNAP_DIR"
     else
         error "$(ui "No pude armar el rollback temporizado." "Could not arm the timed rollback.")"
@@ -1040,7 +1072,7 @@ fase_0_welcome() {
 if [[ $UI_LANG == es ]]; then
 cat <<EOF
   ${CYAN}▸${NC} ${BOLD}$PRETTY_NAME${NC} · ${PUBLIC_IP} · como ${ORIGINAL_USER:-root} · puerto ${CURRENT_PORT}
-  ${DIM}El idioma sale de tu locale; se cambia con --lang en (o --lang es).${NC}
+  ${DIM}Idioma: --lang es o --lang en permite fijarlo en futuras ejecuciones.${NC}
 
   ${BOLD}LO QUE VAMOS A HACER${NC}
    ${CYAN}1${NC}  Usuario administrador con sudo que funciona de verdad
@@ -1049,14 +1081,14 @@ cat <<EOF
    ${CYAN}4${NC}  UFW, avisando de lo que va a bloquear
    ${CYAN}5${NC}  Fail2ban con tu IP excluida de los baneos
    ${CYAN}6${NC}  Actualizaciones automáticas de seguridad
-   ${CYAN}7${NC}  SSH fuera del 22 (recomendado; decides tú)
+   ${CYAN}7${NC}  Puerto SSH distinto de 22 (opcional; decides tú)
 
   ${BOLD}LA RED DE SEGURIDAD${NC}
    ${GREEN}·${NC} Cada cambio deja un snapshot y revertir es una opción del menú.
    ${GREEN}·${NC} El rollback devuelve SSH, UFW y fail2ban. No deshace usuarios, sudo,
      claves ni paquetes.
-   ${GREEN}·${NC} Al cerrar el acceso arranca una cuenta atrás de ${BOLD}${ROLLBACK_MINUTES} min${NC}: si nadie escribe
-     ${YELLOW}acceso-ok${NC} desde ${BOLD}otra${NC} sesión, todo vuelve atrás solo.
+   ${GREEN}·${NC} Al cerrar el acceso arranca una cuenta atrás de ${BOLD}${ROLLBACK_MINUTES} min${NC}: prueba desde
+     ${BOLD}otra${NC} terminal y elige conservar/restaurar; sin respuesta, se revierte.
 
   ${YELLOW}⚠${NC}  ${BOLD}No cierres esta sesión${NC} y mantén abierta la consola VNC del proveedor.
   ${DIM}Idempotente: detecta lo ya configurado y lo omite, puedes repetir.${NC}
@@ -1064,7 +1096,7 @@ EOF
 else
 cat <<EOF
   ${CYAN}▸${NC} ${BOLD}$PRETTY_NAME${NC} · ${PUBLIC_IP} · as ${ORIGINAL_USER:-root} · port ${CURRENT_PORT}
-  ${DIM}The language comes from your locale; change it with --lang es (or --lang en).${NC}
+  ${DIM}Language: use --lang es or --lang en to fix it in future runs.${NC}
 
   ${BOLD}WHAT WE ARE ABOUT TO DO${NC}
    ${CYAN}1${NC}  An admin user whose sudo actually works
@@ -1073,14 +1105,14 @@ cat <<EOF
    ${CYAN}4${NC}  UFW, warning you about what it will block
    ${CYAN}5${NC}  Fail2ban with your IP excluded from bans
    ${CYAN}6${NC}  Automatic security updates
-   ${CYAN}7${NC}  SSH off port 22 (recommended; you decide)
+   ${CYAN}7${NC}  SSH off port 22 (optional; you decide)
 
   ${BOLD}THE SAFETY NET${NC}
    ${GREEN}·${NC} Every change leaves a snapshot, and reverting is a menu option.
    ${GREEN}·${NC} Rollback restores SSH, UFW and fail2ban. It does not undo users, sudo,
      keys or packages.
-   ${GREEN}·${NC} Closing access starts a ${BOLD}${ROLLBACK_MINUTES} min${NC} countdown: unless someone types
-     ${YELLOW}access-ok${NC} from ${BOLD}another${NC} session, everything reverts on its own.
+   ${GREEN}·${NC} Closing access starts a ${BOLD}${ROLLBACK_MINUTES} min${NC} countdown: test from
+     ${BOLD}another${NC} terminal; choose keep/restore or it reverts automatically.
 
   ${YELLOW}⚠${NC}  ${BOLD}Do NOT close this session${NC}, and keep the provider VNC console open.
   ${DIM}Idempotent: it detects what is already set and skips it, so you can repeat.${NC}
@@ -1088,7 +1120,7 @@ EOF
 fi
     if guided_active; then
         echo
-        info "$(ui "Si es tu primer VPS: no hay prisa. Cada fase dice qué hace y qué tienes que teclear; si algo no te cuadra, responde 'n' y el script vuelve atrás solo." "If this is your first VPS: no rush. Each phase says what it does and what you have to type; if something is off, answer 'n' and the script reverts on its own.")"
+        info "$(ui "Si es tu primer VPS: no hay prisa. Cada fase dice qué hará, qué debes hacer y cómo se protege. En una prueba de acceso, Enter no revierte: vuelve a mostrar la decisión." "If this is your first VPS: no rush. Each phase says what it will do, what you must do, and how it is protected. At an access test, Enter does not revert: it shows the decision again.")"
     fi
     if ! confirm "$(ui "¿Entiendes las advertencias y quieres continuar?" "Do you understand the warnings and want to continue?")"; then
         echo "$(ui "Cancelado por el usuario." "Cancelled by the user.")"
@@ -1148,7 +1180,7 @@ ask_sudo_mode() {
     echo "  $(ui "'$USERNAME' necesita una forma real de escalar a root:" "'$USERNAME' needs a real way to escalate to root:")"
     echo "    $(ui "1) contraseña   (recomendado; sudo la pide en la terminal, no afecta a SSH)" "1) password   (recommended; sudo asks for it in the terminal, unrelated to SSH)")"
     echo "    $(ui "2) NOPASSWD     (cómodo, más superficie de ataque si te roban la sesión)" "2) NOPASSWD     (convenient, larger attack surface if your session is stolen)")"
-    echo "    $(ui "3) ninguna      (lo dejas para después)" "3) none        (leave it for later)")"
+    echo "    $(ui "3) conservar la configuración actual (solo si este usuario ya tiene sudo utilizable)" "3) keep the current setup (only if this user already has usable sudo)")"
     read -rp "  $(ui "Elige 1/2/3 [1]: " "Choose 1/2/3 [1]: ")" answer
     case "${answer:-1}" in
         2) SUDO_MODE=nopasswd ;;
@@ -1205,6 +1237,11 @@ ensure_usable_sudo() {
 
 fase_1_user() {
     header "$(ui "FASE 1: Crear usuario con sudo utilizable" "PHASE 1: Create a usable sudo user")"
+    phase_guide "1/7" \
+        "Cuenta de administración" "Administration account" \
+        "Crearé o revisaré un usuario no-root y comprobaré que puede usar sudo." "I will create or review a non-root user and check that it can use sudo." \
+        "Elige un nombre Linux para la cuenta que usarás cada día. La contraseña de sudo es local al VPS; no es la contraseña SSH." "Choose the Linux account you will use every day. The sudo password is local to the VPS; it is not the SSH password." \
+        "Esta fase no cambia todavía las reglas de acceso SSH." "This phase does not change SSH access rules yet."
 
     if [[ -z "$USERNAME" ]]; then
         read -rp "$(ui "Usuario administrador no-root (existente o nuevo): " "Non-root admin user (existing or new): ")" USERNAME || return 1
@@ -1220,6 +1257,7 @@ fase_1_user() {
     else
         info "$(ui "Creando usuario '$USERNAME'..." "Creating user '$USERNAME'...")"
         adduser --gecos "" --disabled-password "$USERNAME" || return 1
+        USER_CREATED_THIS_RUN=1
         success "$(ui "Usuario creado." "User created.")"
     fi
 
@@ -1231,6 +1269,8 @@ fase_1_user() {
     fi
 
     ensure_usable_sudo "$USERNAME" || return 1
+
+    success "$(ui "Cuenta lista: entra por SSH como '$USERNAME' y usa sudo para administrar." "Account ready: log in over SSH as '$USERNAME' and use sudo to administer.")"
 
     log "Fase 1 completada: usuario=$USERNAME sudo=$SUDO_MODE"
     pause
@@ -1375,7 +1415,7 @@ key_howto_text() {
        ssh-keygen -t ed25519
      Acepta la ruta con Enter y escribe una contraseña si quieres protegerla.
   2. Muestra SOLO la parte pública:
-       $( [[ $win -eq 1 ]] && echo 'type $env:USERPROFILE\.ssh\id_ed25519.pub' || echo 'cat ~/.ssh/id_ed25519.pub' )
+       $( [[ $win -eq 1 ]] && echo 'Get-Content "$HOME\.ssh\id_ed25519.pub"' || echo 'cat ~/.ssh/id_ed25519.pub' )
   3. Copia esa línea (empieza por 'ssh-ed25519') y pégala cuando este script la pida.
 
   La clave privada (id_ed25519, sin .pub) NO se copia a ningún lado: se queda en
@@ -1387,7 +1427,7 @@ EOF
        ssh-keygen -t ed25519
      Accept the default path with Enter, and set a passphrase if you want one.
   2. Print ONLY the public part:
-       $( [[ $win -eq 1 ]] && echo 'type $env:USERPROFILE\.ssh\id_ed25519.pub' || echo 'cat ~/.ssh/id_ed25519.pub' )
+       $( [[ $win -eq 1 ]] && echo 'Get-Content "$HOME\.ssh\id_ed25519.pub"' || echo 'cat ~/.ssh/id_ed25519.pub' )
   3. Copy that line (it starts with 'ssh-ed25519') and paste it when this script asks.
 
   The private key (id_ed25519, without .pub) is NOT copied anywhere: it stays on
@@ -1398,16 +1438,21 @@ EOF
 
 fase_2_ssh_key() {
     header "$(ui "FASE 2: Configurar clave SSH" "PHASE 2: Set up the SSH key")"
+    phase_guide "2/7" \
+        "Clave SSH" "SSH key" \
+        "Guardaré solo tu clave pública en la cuenta '$USERNAME'. La clave privada no llega al VPS." "I will save only your public key in account '$USERNAME'. The private key never reaches the VPS." \
+        "Desde tu computadora crea o busca la clave pública y pégala aquí. No pegues el archivo privado." "From your computer create or find the public key and paste it here. Do not paste the private-key file." \
+        "Todavía no cerraré root ni la contraseña. Primero tendrás que probar la clave desde otra terminal." "I will not close root or password access yet. First you will test the key from another terminal."
 
     resolve_pubkey
     if [[ -z "$SSH_PUBKEY" ]]; then
-        info "$(ui "Necesitas copiar tu clave pública SSH al usuario '$USERNAME'." "You need to copy your SSH public key to user '$USERNAME'.")"
+        info "$(ui "Necesitas añadir una clave pública SSH a '$USERNAME'. Esta acción ocurre en dos lugares: la clave se crea en TU computadora y aquí solo se pega la parte pública." "You need to add an SSH public key to '$USERNAME'. This happens in two places: the key is created on YOUR computer and only its public part is pasted here.")"
         echo
         if guided_active && collect_key_candidates; then
-            echo "$(ui "Ya hay claves autorizadas en este equipo. Si alguna es la tuya (con la que entraste hoy), reutilízala y no muevas nada:" "This machine already has authorized keys. If one of them is yours (the one you used to get in today), reuse it and move nothing:")"
+            echo "$(ui "Ya hay claves autorizadas en este VPS. Elige una SOLO si reconoces su huella y sabes que tu computadora conserva la clave privada correspondiente:" "This VPS already has authorized keys. Choose one ONLY if you recognize its fingerprint and know your computer still has the matching private key:")"
             print_key_candidates
             echo
-            read -rp "$(ui "  Número de TU clave (o Enter para pegar una distinta): " "  Number of YOUR key (or Enter to paste a different one): ")" choice
+            read -rp "$(ui "  Número de TU clave (o Enter para pegar una distinta): " "  Number of YOUR key (or Enter to paste a different one): ")" choice || return 1
             if [[ -n "$choice" ]]; then
                 SSH_PUBKEY=$(pick_key_candidate "$choice")
                 if [[ -n "$SSH_PUBKEY" ]]; then
@@ -1423,34 +1468,63 @@ fase_2_ssh_key() {
                 ask_client_os
                 key_howto_text
                 echo
-                echo "$(ui "Si ya tienes tu clave en la computadora, puedes copiarla a este usuario con:" "If you already have your key on your computer, you can copy it to this user with:")"
-                echo -e "  ${CYAN}ssh-copy-id -p $CURRENT_PORT $USERNAME@$PUBLIC_IP${NC}"
-                echo
+                if [[ $USER_CREATED_THIS_RUN -eq 1 ]]; then
+                    warn "$(ui "'$USERNAME' se creó sin contraseña SSH. No uses ssh-copy-id: normalmente no podrá entrar. Pega la línea .pub abajo." "'$USERNAME' was created without an SSH password. Do not use ssh-copy-id: it normally cannot log in. Paste the .pub line below.")"
+                elif [[ "$CLIENT_OS" != windows ]]; then
+                    info "$(ui "Alternativa solo para un usuario existente cuya contraseña SSH conoces: ssh-copy-id -p $CURRENT_PORT $USERNAME@$PUBLIC_IP. Si no estás seguro, pega la pública abajo." "Alternative only for an existing user whose SSH password you know: ssh-copy-id -p $CURRENT_PORT $USERNAME@$PUBLIC_IP. If unsure, paste the public key below.")"
+                fi
             else
-                echo "$(ui "Desde donde tengas tu clave privada, ejecuta:" "From wherever your private key is, run:")"
-                echo -e "  ${CYAN}ssh-copy-id -p $CURRENT_PORT $USERNAME@$PUBLIC_IP${NC}"
+                echo "$(ui "Pega una sola línea de clave pública. No pegues la clave privada." "Paste one public-key line only. Do not paste the private key.")"
                 echo
             fi
-            echo "$(ui "O pega aquí la clave pública:" "Or paste the public key here:")"
-            read -rp "$(ui "Clave pública SSH (o Enter para omitir): " "SSH public key (or Enter to skip): ")" SSH_PUBKEY
-            resolve_pubkey
+            while [[ -z "$SSH_PUBKEY" ]]; do
+                echo "$(ui "Pega aquí la clave pública (la línea que empieza por ssh-ed25519, ssh-rsa o ecdsa-...):" "Paste the public key here (the line beginning ssh-ed25519, ssh-rsa or ecdsa-...):")"
+                if ! read -rp "$(ui "Clave pública SSH (Enter muestra opciones seguras): " "SSH public key (Enter shows safe options): ")" SSH_PUBKEY; then
+                    return 1
+                fi
+                resolve_pubkey
+                [[ -n "$SSH_PUBKEY" ]] && break
+
+                warn "$(ui "No se recibió una clave. Sin una clave probada no es seguro cerrar root ni el acceso con contraseña." "No key was received. Without a tested key it is not safe to close root or password access.")"
+                echo "  1) $(ui "Volver a ver las instrucciones y pegar la clave" "Review the instructions and paste the key")"
+                echo "  2) $(ui "Aplicar solo límites no restrictivos; root y la contraseña SEGUIRÁN activos" "Apply only non-restrictive limits; root and password will STAY enabled")"
+                echo "  3) $(ui "Salir sin continuar con el hardening de SSH" "Exit without continuing SSH hardening")"
+                local no_key_choice=""
+                if ! read -rp "$(ui "Elige 1/2/3: " "Choose 1/2/3: ")" no_key_choice; then
+                    return 1
+                fi
+                case "$no_key_choice" in
+                    1)
+                        if guided_active; then
+                            key_howto_text
+                        fi
+                        ;;
+                    2)
+                        KEY_READY=0
+                        OPT_SKIP_LOCKDOWN=1
+                        warn "$(ui "Continuarás con límites parciales. Root y el acceso por contraseña no se cerrarán." "You will continue with partial limits. Root and password access will not be closed.")"
+                        log "Fase 2 omitida por falta de clave; fase 3 sin cierre de acceso."
+                        pause
+                        return 0
+                        ;;
+                    3)
+                        info "$(ui "No se aplicó hardening de SSH. Cuando tengas la clave pública, vuelve a ejecutar la fase 2." "No SSH hardening was applied. Run phase 2 again when you have the public key.")"
+                        return 1
+                        ;;
+                    *)
+                        warn "$(ui "Elige 1, 2 o 3. No haré cambios de acceso hasta que decidas." "Choose 1, 2 or 3. I will make no access changes until you decide.")"
+                        ;;
+                esac
+            done
         fi
     fi
 
     if [[ -z "$SSH_PUBKEY" ]]; then
-        KEY_READY=0
-        warn "$(ui "No hay clave instalada. Sin ella NO se puede cerrar root/contraseña." "No key installed. Without it root/password CANNOT be locked down.")"
-        if [[ $NON_INTERACTIVE -eq 1 ]]; then
-            error "$(ui "Modo no interactivo sin --pubkey: cancelo antes de tocar sshd." "Non-interactive mode without --pubkey: aborting before touching sshd.")"
-            return 1
-        fi
-        if ! confirm "$(ui "¿Continuar a la fase 3 en modo --skip-lockdown (solo límites, sin cerrar acceso)?" "Continue to phase 3 in --skip-lockdown mode (limits only, no lockdown)?")"; then
-            return 1
-        fi
-        OPT_SKIP_LOCKDOWN=1
-        log "Fase 2 omitida por falta de clave; fase 3 sin cierre de acceso."
-        pause
-        return 0
+        # Solo se alcanza desde entrada no interactiva inválida o si una futura
+        # ruta salta el bucle anterior. Nunca se convierte un Enter accidental
+        # en --skip-lockdown.
+        error "$(ui "No hay clave pública; detengo esta fase sin tocar el acceso SSH." "There is no public key; stopping this phase without changing SSH access.")"
+        return 1
     fi
 
     if ! validate_pubkey "$SSH_PUBKEY"; then
@@ -1464,8 +1538,8 @@ fase_2_ssh_key() {
     verify_strictmodes "$USERNAME" || return 1
 
     KEY_READY=1
-    info "$(ui "Sigue: la fase 3 deshabilita root y la autenticación por contraseña." "Next: phase 3 disables root and password authentication.")"
-    info "$(ui "Antes de eso te pediremos probar ESTA clave desde otra terminal; tenla lista." "Before that you will be asked to test THIS key from another terminal; have it ready.")"
+    KEY_TESTED=0
+    success "$(ui "Clave instalada. Aún no cerré nada: la fase 3 primero te pedirá probar ESTA clave desde otra terminal." "Key installed. Nothing is closed yet: phase 3 will first ask you to test THIS key from another terminal.")"
     log "Fase 2 completada: $VALID_FINGERPRINT"
     pause
 }
@@ -1505,15 +1579,25 @@ report_pending_updates() {
 }
 
 reboot_hint() {
+    local when="${1:-now}"
     if [[ -f "$REBOOT_FLAG" ]]; then
         warn "$(ui "Hace falta reiniciar: el kernel que está corriendo sigue siendo el viejo, así que los parches nuevos aún no hacen efecto." "A reboot is needed: the running kernel is still the old one, so the new patches are not in effect yet.")"
-        echo "    sudo reboot"
+        if [[ "$when" == after_access_test ]]; then
+            info "$(ui "No reinicies todavía. Primero termina las pruebas de acceso y confirma los cambios; después ejecuta: sudo reboot. Al volver, usa la opción 13 para verificar." "Do not reboot yet. First finish the access tests and confirm the changes; then run: sudo reboot. Once back, use option 13 to verify.")"
+        else
+            echo "    sudo reboot"
+        fi
     fi
     return 0
 }
 
 fase_2b_updates() {
     header "$(ui "FASE 2.5: Aplicar actualizaciones pendientes" "PHASE 2.5: Apply the pending updates")"
+    phase_guide "2.5/7" \
+        "Actualizaciones de hoy" "Today's updates" \
+        "Aplicaré los paquetes pendientes antes del cierre de SSH, mientras aún existe una ruta de recuperación." "I will apply pending packages before SSH lockdown, while a recovery path still exists." \
+        "Decide si quieres aplicarlas ahora. Si se pide reiniciar, termina primero las pruebas de acceso de este asistente." "Decide whether to apply them now. If a reboot is needed, finish this assistant's access tests first." \
+        "Un reinicio posterior activa parches de kernel; no cambia por sí solo las reglas SSH." "A later reboot activates kernel patches; it does not itself change SSH rules."
 
     if [[ $UPGRADE_MODE == no ]]; then
         info "$(ui "--no-upgrade: dejo las pendientes para unattended-upgrades (fase 6)." "--no-upgrade: leaving the pending ones to unattended-upgrades (phase 6).")"
@@ -1522,7 +1606,7 @@ fase_2b_updates() {
     apt_pending_counts
     if [[ "${PENDING_COUNT:-0}" -eq 0 ]]; then
         success "$(ui "Nada pendiente que aplicar." "Nothing pending to apply.")"
-        reboot_hint
+        reboot_hint after_access_test
         return 0
     fi
     if [[ $NON_INTERACTIVE -eq 1 && $UPGRADE_MODE != yes ]]; then
@@ -1540,7 +1624,7 @@ fase_2b_updates() {
         return 1
     fi
     success "$(ui "Actualizaciones aplicadas." "Updates applied.")"
-    reboot_hint
+    reboot_hint after_access_test
     log "Fase 2.5 completada: upgrades=$PENDING_COUNT security=$PENDING_SECURITY"
 }
 
@@ -1674,25 +1758,87 @@ resolve_guided_mode() {
     return 0
 }
 
-confirm_access() {
-    local motivo="${1:-}" token="" ipes
-    ipes=$(current_admin_ips)
+ssh_test_command() {
+    local port="${1:-$CURRENT_PORT}"
+    printf 'ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -p %s %s@%s' \
+        "$port" "$USERNAME" "$PUBLIC_IP"
+}
+
+# Imprime la misma prueba antes de cerrar SSH, después de modificar SSH, tras
+# activar UFW y durante un cambio de puerto. La consola web del proveedor es
+# deliberadamente excluida: permite recuperar el VPS, pero no demuestra que
+# una conexión SSH nueva desde Internet funcione.
+show_access_test_steps() {
+    local port="${1:-$CURRENT_PORT}" context="${2:-}"
     echo
-    warn "$(ui "Abre OTRA sesión (otra terminal, otro cliente, o la consola del proveedor) y prueba; esta sesión queda viva de respaldo:" "Open ANOTHER session (another terminal, another client, or the provider console) and test; this one stays alive as backup:")"
-    echo "   ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -p $CURRENT_PORT $USERNAME@$PUBLIC_IP"
-    echo "$(ui "En esa sesión comprueba también: sudo -v && sudo -l" "In that session also verify: sudo -v && sudo -l")"
-    if [[ -n "$ipes" ]]; then
-        warn "$(ui "Necesitas tu clave privada, y conviene partir de esta misma IP: es la única que fail2ban dejó excluida ($ipes). Desde otra IP, tres erratas te bloquean." "You need your private key, and stick to this same IP: it is the only one fail2ban whitelisted ($ipes). From another IP, three typos will ban you.")"
-    else
-        warn "$(ui "Necesitas tu clave privada a mano para esta prueba." "You need your private key at hand for this test.")"
+    echo "  ${BOLD}$(ui "PRUEBA DE ACCESO DESDE OTRA TERMINAL" "ACCESS TEST FROM ANOTHER TERMINAL")${NC}"
+    [[ -n "$context" ]] && info "$context"
+    echo "  1. $(ui "Deja ESTA terminal abierta como respaldo." "Keep THIS terminal open as your backup.")"
+    echo "  2. $(ui "En otra terminal de TU computadora ejecuta:" "In another terminal on YOUR computer run:")"
+    echo -e "     ${CYAN}$(ssh_test_command "$port")${NC}"
+    echo "  3. $(ui "La nueva sesión debe mostrar el usuario '$USERNAME'. Allí ejecuta:" "The new session must show user '$USERNAME'. There run:")"
+    echo "     whoami && sudo -v && sudo -l"
+    echo "  4. $(ui "Vuelve a esta terminal solo cuando esos pasos funcionen." "Return to this terminal only after those steps work.")"
+    info "$(ui "Si tu clave privada no usa la ruta habitual, añade -i /ruta/a/tu_clave al comando." "If your private key is not in the usual location, add -i /path/to/your_key to the command.")"
+    warn "$(ui "La consola web/VNC del proveedor sirve para recuperar el VPS; NO valida esta prueba SSH externa." "The provider web/VNC console is for VPS recovery; it does NOT validate this external SSH test.")"
+}
+
+# Las respuestas humanas deben ser fáciles de acertar. Se aceptan los tokens
+# antiguos para compatibilidad, pero la pantalla pide s/y o n. Enter o un
+# texto desconocido vuelven a explicar la pregunta: nunca provocan rollback
+# por un error de formato.
+ask_access_result() {
+    local keep_es="$1" keep_en="$2" restore_es="$3" restore_en="$4" response=""
+    while true; do
+        if ! read -rp "$(ui "¿La prueba funcionó? [s] $keep_es  [n] $restore_es: " "Did the test work? [y] $keep_en  [n] $restore_en: ")" response; then
+            return 1
+        fi
+        case "$response" in
+            s|S|y|Y|acceso-ok|access-ok) return 0 ;;
+            n|N|r|R|revertir|revert|restore) return 1 ;;
+            "")
+                info "$(ui "Aún no se tomó ninguna decisión. Termina la prueba en la otra terminal y responde s o n." "No decision has been made yet. Finish the test in the other terminal and answer y or n.")"
+                ;;
+            *)
+                warn "$(ui "No entendí '$response'. Responde s para conservar o n para restaurar; la cuenta atrás sigue protegiéndote." "I did not understand '$response'. Answer y to keep or n to restore; the countdown is still protecting you.")"
+                ;;
+        esac
+    done
+}
+
+# Se usa antes de cualquier cierre. No hay cambios que revertir todavía: si la
+# prueba falla, simplemente se deja el acceso por contraseña abierto y se
+# explica la siguiente acción.
+confirm_key_preflight() {
+    local port="${1:-$CURRENT_PORT}"
+    show_access_test_steps "$port" "$(ui "Esta es la prueba PREVIA: todavía no cerraré root ni el acceso con contraseña." "This is the PRE-CHECK: root and password access are not closed yet.")"
+    if ask_access_result \
+        "La clave funciona; continuar con el cierre" "The key works; continue with the lockdown" \
+        "No cerrar el acceso" "Do not close access"; then
+        KEY_TESTED=1
+        success "$(ui "Prueba previa confirmada. Ahora sí es seguro aplicar el cierre de SSH." "Pre-check confirmed. It is now safe to apply the SSH lockdown.")"
+        return 0
     fi
-    [[ -n "$motivo" ]] && info "$motivo"
+    KEY_TESTED=0
+    warn "$(ui "La clave no quedó confirmada. No cerraré root ni la contraseña en esta ejecución." "The key was not confirmed. I will not close root or password access in this run.")"
+    return 1
+}
+
+confirm_access() {
+    local port="${1:-$CURRENT_PORT}" motivo="${2:-}" default_reason=""
+    default_reason="$(ui "Esta es la prueba POSTERIOR al cambio; confirma que el cambio ya aplicado sigue siendo accesible." "This is the POST-CHANGE test; confirm that the change already applied remains accessible.")"
+    show_access_test_steps "$port" "${motivo:-$default_reason}"
     if [[ $ROLLBACK_ARMED -eq 1 ]]; then
-        warn "$(ui "La cuenta atrás corre mientras pruebas: te quedan ~${ROLLBACK_MINUTES}m." "The countdown runs while you test: ~${ROLLBACK_MINUTES}m left.")"
-        warn "$(ui "Si no funciona, escribe cualquier otra cosa y revierto al instante; si te vas, revierte solo." "If it does not work, type anything else and I revert immediately; if you walk away, it reverts on its own.")"
+        warn "$(ui "Protección temporal activa durante ~${ROLLBACK_MINUTES} min. Si eliges restaurar o no confirmas, volverán SSH, UFW y Fail2ban al estado anterior a esta fase." "Temporary protection is active for ~${ROLLBACK_MINUTES} min. If you choose restore or do not confirm, SSH, UFW and Fail2ban return to their state before this phase.")"
+        info "$(ui "Usuario, clave instalada, sudo y actualizaciones no se eliminan. No necesitas tocar el temporizador: se cancela automáticamente al conservar los cambios." "The user, installed key, sudo and updates are not removed. You do not need to touch the timer: it is cancelled automatically when you keep the changes.")"
     fi
-    read -rp "$(ui "Si la conexión nueva y sudo funcionan, escribe acceso-ok (otra cosa revierte): " "If the new connection and sudo work, type access-ok (anything else reverts): ")" token
-    token_ok "$token"
+    if ask_access_result \
+        "conservar cambios" "keep changes" \
+        "restaurar cambios de acceso" "restore access changes"; then
+        ACCESS_TEST_CONFIRMED=1
+        return 0
+    fi
+    return 1
 }
 
 revert_now() {
@@ -1713,7 +1859,11 @@ revert_now() {
             kill_rollback_timer "$ROLLBACK_JOB" || return 1
             ROLLBACK_ARMED=0
         fi
-        warn "$(ui "Configuración restaurada desde $target." "Configuration restored from $target.")"
+        RECOVERY_OCCURRED=1
+        RECOVERY_REASON="$reason"
+        success "$(ui "RESTAURACIÓN SEGURA COMPLETADA." "SAFE RESTORATION COMPLETED.")"
+        info "$(ui "Volvieron SSH, UFW y Fail2ban al estado anterior a esta fase. Tu usuario, clave instalada, sudo y actualizaciones permanecen." "SSH, UFW and Fail2ban returned to their state before this phase. Your user, installed key, sudo and updates remain.")"
+        info "$(ui "Siguiente paso: revisa la prueba indicada, conserva esta sesión abierta y vuelve a ejecutar solo la fase pendiente." "Next step: review the indicated test, keep this session open, and run only the pending phase again.")"
     else
         error "$(ui "El rollback pidió atención manual: usa la consola VNC del proveedor." "The rollback needs manual attention: use the provider VNC console.")"
         return 1
@@ -1764,16 +1914,36 @@ lockdown_possible() {
 
 fase_3_harden_ssh() {
     header "$(ui "FASE 3: Endurecer configuración SSH" "PHASE 3: Harden the SSH configuration")"
+    RECOVERY_OCCURRED=0
+    RECOVERY_REASON=""
+    phase_guide "3/7" \
+        "Proteger el acceso SSH" "Protect SSH access" \
+        "Aplicaré límites de SSH y, solo con una clave probada, desactivaré root y la autenticación por contraseña para '$USERNAME'." "I will apply SSH limits and, only with a tested key, disable root and password authentication for '$USERNAME'." \
+        "Mantén esta sesión abierta. Antes del cierre probarás una conexión nueva desde otra terminal de tu computadora; después la repetirás con el cambio activo." "Keep this session open. Before lockdown you will test a new connection from another terminal on your computer; then repeat it with the change active." \
+        "Si la segunda prueba falla, una cuenta atrás restaura SSH, UFW y Fail2ban; tu usuario, clave y sudo permanecen." "If the second test fails, a countdown restores SSH, UFW and Fail2ban; your user, key and sudo remain."
     LOCKDOWN=1
+
+    # Una fase ejecutada desde el menú puede venir después de un cambio de
+    # puerto. La prueba previa debe mostrar el listener efectivo de AHORA,
+    # nunca un valor que quedó de una fase anterior.
+    detect_ssh_activation
+    CURRENT_PORT=$(current_ssh_port)
+    ssh_activation_summary
 
     if [[ $KEY_READY -ne 1 ]]; then
         if [[ -n "$USERNAME" ]] && existing_key_present "$USERNAME"; then
-            if [[ $NON_INTERACTIVE -eq 0 ]] && confirm "$(ui "¿Puedes entrar AHORA con clave como '$USERNAME' desde otra terminal?" "Can you log in RIGHT NOW with a key as '$USERNAME' from another terminal?")"; then
+            if [[ $NON_INTERACTIVE -eq 0 && $ON_CONSOLE -eq 0 && $OPT_SKIP_LOCKDOWN -eq 0 ]] && confirm_key_preflight "$CURRENT_PORT"; then
                 KEY_READY=1
                 log "$(ui "Fase 3: clave preexistente confirmada por el operador." "Phase 3: pre-existing key confirmed by the operator.")"
             else
-                info "$(ui "Hay clave pero no la confirmaste: modo suave." "A key exists but you did not confirm it: soft mode.")"
+                info "$(ui "Hay una clave, pero no quedó probada desde otra terminal: mantendré el acceso abierto." "There is a key, but it was not tested from another terminal: I will keep access open.")"
             fi
+        fi
+    fi
+    if [[ $KEY_READY -eq 1 && $KEY_TESTED -ne 1 && $NON_INTERACTIVE -eq 0 && $ON_CONSOLE -eq 0 && \
+          $OPT_SKIP_LOCKDOWN -eq 0 && $ALLOW_LOCKDOWN -eq 0 ]]; then
+        if ! confirm_key_preflight "$CURRENT_PORT"; then
+            KEY_READY=0
         fi
     fi
     if [[ $KEY_READY -ne 1 ]] || [[ $OPT_SKIP_LOCKDOWN -eq 1 ]] || ! lockdown_possible; then
@@ -1784,17 +1954,15 @@ fase_3_harden_ssh() {
     if [[ $ON_CONSOLE -eq 1 && $ALLOW_LOCKDOWN -eq 0 && $NON_INTERACTIVE -eq 0 ]]; then
         LOCKDOWN=0
     fi
-    detect_ssh_activation
-    CURRENT_PORT=$(current_ssh_port)
-    ssh_activation_summary
-
     if [[ $LOCKDOWN -eq 0 ]]; then
-        warn "$(ui "FASE 3 EN MODO SUAVE: aplico límites, dejo root y contraseña como están." "PHASE 3 IN SOFT MODE: applying limits; root and password stay as they are.")"
+        warn "$(ui "HARDENING PARCIAL: NO cerraré root ni el acceso por contraseña." "PARTIAL HARDENING: I will NOT close root or password access.")"
+        info "$(ui "Sí aplicaré límites de SSH que no cierran sesiones (intentos, sesiones, X11 y keepalive)." "I will apply SSH limits that do not close sessions (attempts, sessions, X11 and keepalive).")"
         [[ $KEY_READY -ne 1 ]] && info "$(ui "Motivo: no hay clave verificada en la fase 2." "Reason: no key was verified in phase 2.")"
-        [[ $OPT_SKIP_LOCKDOWN -eq 1 ]] && info "$(ui "Motivo: --skip-lockdown." "Reason: --skip-lockdown.")"
+        [[ $OPT_SKIP_LOCKDOWN -eq 1 ]] && info "$(ui "Motivo: elegiste conservar el acceso abierto hasta tener una clave probada." "Reason: you chose to keep access open until you have a tested key.")"
         if [[ $ON_CONSOLE -eq 1 && $ALLOW_LOCKDOWN -eq 0 ]]; then
-            info "$(ui "Motivo: estás en la consola del proveedor; desde ahí no puedes probar una conexión SSH nueva." "Reason: you are on the provider console; a new SSH connection cannot be tested from there.")"
+            info "$(ui "Motivo: estás en la consola del proveedor; sirve para recuperar el VPS, pero no para probar una conexión SSH externa." "Reason: you are on the provider console; it recovers the VPS but cannot test an external SSH connection.")"
         fi
+        info "$(ui "Siguiente paso: desde tu computadora instala o prueba la clave en la fase 2 y vuelve a ejecutar esta fase." "Next step: from your computer install or test the key in phase 2, then run this phase again.")"
     fi
     snapshot_state || return 1
     if [[ $LOCKDOWN -eq 1 && $ALLOW_LOCKDOWN -eq 0 ]]; then
@@ -1833,7 +2001,7 @@ fase_3_harden_ssh() {
             revert_now "$(ui "En modo suave sshd no quedó escuchando." "In soft mode sshd is not listening.")"
             return 1
         fi
-        success "$(ui "SSH recargado con los límites (sin cierre de acceso)." "SSH reloaded with the limits (without locking down).")"
+        success "$(ui "SSH recargado con límites; root y la contraseña siguen activos." "SSH reloaded with limits; root and password stay enabled.")"
         show_effective_ssh
         log "Fase 3 completada en modo suave."
         pause
@@ -1857,10 +2025,10 @@ fase_3_harden_ssh() {
     # La prueba de acceso va DESPUÉS del reinicio: antes de esto el servidor
     # aún corría con la config vieja y el token no significaba nada.
     if [[ $ALLOW_LOCKDOWN -eq 0 && $NON_INTERACTIVE -eq 0 ]]; then
-        if confirm_access; then
+        if confirm_access "$CURRENT_PORT" "$(ui "Esta es la prueba POSTERIOR al cierre de root y contraseña. Debe funcionar solo con tu clave." "This is the POST-LOCKDOWN test after closing root and password access. It must work using only your key.")"; then
             disarm_rollback || return 1
         else
-            revert_now "$(ui "No confirmaste el acceso: revierto inmediatamente." "You did not confirm access: reverting immediately.")"
+            revert_now "$(ui "Elegiste restaurar o no se pudo confirmar el acceso después del cierre SSH." "You chose restore or access could not be confirmed after SSH lockdown.")"
             return 1
         fi
     fi
@@ -1901,8 +2069,8 @@ warn_listening_services() {
         done
     done
     if [[ -n "$risky_tcp$risky_udp" ]]; then
-        warn "$(ui "Al activar UFW se quedarían sin acceso estos puertos:$risky_tcp$risky_udp" "Enabling UFW would cut access to these ports:$risky_tcp$risky_udp")"
-        echo "     $(ui "Si alguno te sirve (web 80/443, DB, panel), ábrelo ahora:" "If you need any of them (web 80/443, DB, panel), open it now:")"
+        warn "$(ui "Al activar UFW, estos puertos quedarán BLOQUEADOS salvo que los permitas de forma deliberada:$risky_tcp$risky_udp" "When UFW is enabled, these ports will be BLOCKED unless you deliberately allow them:$risky_tcp$risky_udp")"
+        echo "     $(ui "No abras un puerto que no reconozcas. Si uno es un servicio público que necesitas conservar, estos son los comandos:" "Do not open a port you do not recognize. If one is a public service you need to keep, these are the commands:")"
         for p in $risky_tcp; do
             echo "       sudo ufw allow ${p}/tcp"
         done
@@ -1915,7 +2083,7 @@ warn_listening_services() {
         if [[ $NON_INTERACTIVE -eq 1 || $ASSUME_YES -eq 1 ]]; then
             warn "$(ui "No abro esos puertos automáticamente (--yes no abre accesos nuevos)." "I will not open those ports automatically (--yes does not open new accesses).")"
             warn "$(ui "Quedarán filtrados por UFW; ábrelos tú con los comandos de arriba." "They will stay blocked by UFW; open them yourself with the commands above.")"
-        elif confirm "$(ui "¿Abrir ahora esos puertos antes de activar UFW?" "Open those ports now, before enabling UFW?")"; then
+        elif confirm "$(ui "¿Mantener accesibles TODOS los puertos listados? Elige 's' solo si reconoces cada servicio." "Keep ALL listed ports reachable? Choose 'y' only if you recognize every service.")"; then
             for p in $risky_tcp; do
                 if ! ufw allow "${p}/tcp" >> "$LOG_FILE" 2>&1; then
                     error "$(ui "No pude permitir el puerto TCP $p." "Could not allow TCP port $p.")"
@@ -1931,7 +2099,7 @@ warn_listening_services() {
                 info "$(ui "Puerto $p permitido." "Port $p allowed.")"
             done
         else
-            info "$(ui "No abro nada: esos puertos quedarán filtrados al activar UFW." "Opening nothing: those ports will stay blocked once UFW is enabled.")"
+            info "$(ui "No abro nada: esos puertos quedarán filtrados al activar UFW. Puedes permitir uno más tarde con el comando mostrado." "Opening nothing: those ports will stay blocked once UFW is enabled. You can allow one later with the shown command.")"
         fi
     else
         success "$(ui "Todo lo que escucha tiene regla en UFW (o solo es SSH)." "Everything listening already has a UFW rule (or is just SSH).")"
@@ -1940,6 +2108,13 @@ warn_listening_services() {
 
 fase_4_ufw() {
     header "$(ui "FASE 4: Activar cortafuegos UFW" "PHASE 4: Enable the UFW firewall")"
+    RECOVERY_OCCURRED=0
+    RECOVERY_REASON=""
+    phase_guide "4/7" \
+        "Cortafuegos UFW" "UFW firewall" \
+        "Permitiré SSH en el puerto $CURRENT_PORT y bloquearé conexiones entrantes que no tengan una regla explícita." "I will allow SSH on port $CURRENT_PORT and block incoming connections without an explicit rule." \
+        "Revisa la lista de puertos. Conserva abiertos solo los servicios que reconoces y necesitas publicar; después repetirás la prueba SSH desde otra terminal." "Review the port list. Keep open only services you recognize and need to expose; then repeat the SSH test from another terminal." \
+        "La prueba después de UFW es obligatoria porque la prueba anterior ocurrió antes de que el firewall filtrara la red." "The test after UFW is required because the earlier test happened before the firewall filtered the network."
 
     if ! command -v ufw &>/dev/null; then
         info "$(ui "Instalando UFW..." "Installing UFW...")"
@@ -1968,25 +2143,24 @@ fase_4_ufw() {
         success "$(ui "UFW ya está activo." "UFW is already active.")"
     elif [[ $NON_INTERACTIVE -eq 1 && $ALLOW_LOCKDOWN -eq 0 ]]; then
         warn "$(ui "Reglas preparadas; no activo UFW sin prueba de acceso en modo no interactivo." "Rules prepared; not enabling UFW without an access test in non-interactive mode.")"
-    elif confirm "$(ui "¿Activar UFW ahora? Los servicios sin reglas quedarán filtrados." "Enable UFW now? Services without rules will stay blocked.")"; then
+    elif confirm "$(ui "¿Activar UFW ahora? SSH seguirá permitido; todo servicio sin regla quedará bloqueado." "Enable UFW now? SSH stays allowed; every service without a rule will be blocked.")"; then
         if ! ufw --force enable; then
             revert_now "$(ui "Falló la activación de UFW." "Enabling UFW failed.")"
             return 1
         fi
         if [[ $ALLOW_LOCKDOWN -eq 0 && $ON_CONSOLE -eq 1 ]]; then
-            warn "$(ui "Desde la consola no puedes probar el SSH nuevo, así que no te pido el acceso-ok." "From the console you cannot test the new SSH, so I will not ask you for access-ok.")"
+            warn "$(ui "Desde la consola no puedes terminar esta prueba: necesitas una terminal de tu computadora para validar SSH a través de UFW." "You cannot finish this test from the console: you need a terminal on your computer to validate SSH through UFW.")"
             if [[ -n "$ROLLBACK_JOB" ]]; then
-                warn "$(ui "La cuenta atrás de ${ROLLBACK_MINUTES}m sigue armada: si algo quedó mal, revierte sola. Al entrar por SSH desde tu computadora, cancélala con:" "The ${ROLLBACK_MINUTES}m countdown stays armed: if something is wrong it reverts on its own. When you are in over SSH from your computer, cancel it with:")"
-                echo "    sudo systemctl stop $ROLLBACK_JOB.timer"
+                info "$(ui "La protección temporal sigue activa durante ${ROLLBACK_MINUTES} min. No la desarmes desde la consola: prueba SSH externo primero y vuelve a ejecutar el asistente si necesitas conservar este cambio." "Temporary protection remains active for ${ROLLBACK_MINUTES} min. Do not disarm it from the console: test external SSH first and rerun the assistant if you need to keep this change.")"
             fi
         elif [[ $ALLOW_LOCKDOWN -eq 0 ]]; then
-            if ! confirm_access "$(ui "Prueba adicional por el firewall: si un puerto que necesitas quedó filtrado, aquí lo vas a notar." "Extra test because of the firewall: if a port you need got blocked, you will notice here.")"; then
-                revert_now "$(ui "No confirmaste acceso después de activar UFW." "You did not confirm access after enabling UFW.")"
+            if ! confirm_access "$CURRENT_PORT" "$(ui "Esta es la segunda prueba: UFW ya está activo. Confirma SSH, sudo y los servicios que elegiste conservar." "This is the second test: UFW is active now. Confirm SSH, sudo and the services you chose to keep.")"; then
+                revert_now "$(ui "Elegiste restaurar o no se pudo confirmar el acceso después de activar UFW." "You chose restore or access could not be confirmed after enabling UFW.")"
                 return 1
             fi
             disarm_rollback || return 1
         fi
-        success "$(ui "UFW activado." "UFW enabled.")"
+        success "$(ui "UFW activado. Las reglas mostradas son las únicas puertas de entrada públicas que conserva." "UFW enabled. The displayed rules are the only public entry points it keeps.")"
     else
         revert_now "$(ui "Activación de UFW cancelada." "UFW activation cancelled.")"
         return 0
@@ -2065,6 +2239,11 @@ detect_admin_ips() {
 
 fase_5_fail2ban() {
     header "$(ui "FASE 5: Instalar Fail2ban" "PHASE 5: Install Fail2ban")"
+    phase_guide "5/7" \
+        "Bloqueo de intentos repetidos" "Repeated-attempt blocking" \
+        "Fail2ban bloqueará durante 24 horas una IP que falle 3 veces al iniciar SSH dentro de 10 minutos." "Fail2ban will block an IP for 24 hours after 3 failed SSH logins within 10 minutes." \
+        "Revisa la IP que se excluirá. Si tu IP cambia por VPN o red móvil, no dependas de esa exclusión y conserva la consola del proveedor como recuperación." "Review the IP that will be excluded. If your IP changes through VPN or mobile data, do not rely on that exclusion and keep the provider console for recovery." \
+        "Esta fase no pide otra prueba SSH; evita intentos de contraseña repetidos mientras el jail queda activo." "This phase does not require another SSH test; avoid repeated password attempts while the jail becomes active."
 
     if ! command -v fail2ban-client &>/dev/null; then
         info "$(ui "Instalando Fail2ban..." "Installing Fail2ban...")"
@@ -2098,6 +2277,7 @@ fase_5_fail2ban() {
     fi
     fail2ban-client status sshd 2>/dev/null | sed 's/^/    /' || true
     success "$(ui "Fail2ban activo con el jail sshd." "Fail2ban active with the sshd jail.")"
+    info "$(ui "Resultado: 3 fallos en 10 minutos bloquean 24 h. La exclusión configurada es: ${ADMIN_IPS:-ninguna}." "Result: 3 failures in 10 minutes block for 24 h. The configured exclusion is: ${ADMIN_IPS:-none}.")"
 
     log "Fase 5 completada (backend=$FAIL2BAN_BACKEND port=$CURRENT_PORT ignore='$ADMIN_IPS')."
     pause
@@ -2108,6 +2288,11 @@ fase_5_fail2ban() {
 # ============================================================
 fase_6_auto_updates() {
     header "$(ui "FASE 6: Actualizaciones automáticas" "PHASE 6: Automatic updates")"
+    phase_guide "6/7" \
+        "Actualizaciones automáticas" "Automatic updates" \
+        "Activaré la comprobación diaria e instalación automática de actualizaciones de seguridad." "I will enable daily checks and automatic installation of security updates." \
+        "No necesitas responder salvo que apt muestre un error. Revisa los avisos de reinicio cuando el sistema los indique." "You do not need to respond unless apt shows an error. Review reboot notices when the system indicates them." \
+        "Esto programa futuras actualizaciones; no sustituye la actualización de hoy de la fase 2.5." "This schedules future updates; it does not replace today's update in phase 2.5."
 
     if [[ "$(dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null || true)" != 'install ok installed' ]]; then
         info "$(ui "Instalando unattended-upgrades..." "Installing unattended-upgrades...")"
@@ -2127,6 +2312,8 @@ EOF
 
     info "$(ui "Ejecutando dry-run..." "Running dry-run...")"
     unattended-upgrade --dry-run >> "$LOG_FILE" 2>&1 || return 1
+
+    success "$(ui "Actualizaciones automáticas activadas: el VPS revisará seguridad cada día. Si un parche pide reinicio, hazlo después de confirmar acceso y vuelve a usar la opción 13." "Automatic updates enabled: the VPS will review security daily. If a patch needs a reboot, do it after confirming access and use option 13 again.")"
 
     log "Fase 6 completada."
     pause
@@ -2158,6 +2345,13 @@ port_in_use_by_other() {
 
 fase_7_change_port() {
     header "$(ui "FASE 7: Cambiar puerto SSH (opcional)" "PHASE 7: Change the SSH port (optional)")"
+    RECOVERY_OCCURRED=0
+    RECOVERY_REASON=""
+    phase_guide "7/7" \
+        "Puerto SSH opcional" "Optional SSH port" \
+        "Abriré el puerto nuevo junto al actual, probarás el nuevo desde tu computadora y solo después cerraré el antiguo." "I will open the new port alongside the current one, you will test it from your computer, and only then close the old one." \
+        "Esta fase es opcional. Cambiar de puerto reduce ruido automático, pero no reemplaza clave SSH, UFW ni Fail2ban." "This phase is optional. Changing port reduces automated noise, but does not replace an SSH key, UFW or Fail2ban." \
+        "La cuenta atrás conserva el puerto actual hasta que la prueba del nuevo funcione." "The countdown keeps the current port until the new-port test works."
 
     detect_ssh_activation
     ssh_activation_summary
@@ -2178,7 +2372,7 @@ fase_7_change_port() {
             info "$(ui "Desde la consola no puedo probar el puerto nuevo, así que lo dejo en $CURRENT_PORT. Hazlo por SSH desde tu computadora cuando entres: sudo bash secure-vps.sh --user ${USERNAME:-<tuusuario>} --port 2222" "From the console I cannot test the new port, so leaving it on $CURRENT_PORT. Do it over SSH from your computer once you are in: sudo bash secure-vps.sh --user ${USERNAME:-<youruser>} --port 2222")"
             return 0
         fi
-        if ! confirm "$(ui "Recomendado: sacar SSH del puerto 22 (por ejemplo a 2222). El 22 se lleva todo el barrido automático de bots; cambiarlo no sustituye a la clave, pero limpia los logs y reduce bloqueos de fail2ban. ¿Lo cambiamos?" "Recommended: move SSH off port 22 (to 2222, for example). Port 22 absorbs all the automated bot scanning; changing it does not replace a key, but it keeps the logs clean and reduces fail2ban bans. Change it?")"; then
+        if ! confirm "$(ui "¿Quieres cambiar el puerto SSH? Es opcional: la protección principal sigue siendo la clave, UFW y Fail2ban." "Do you want to change the SSH port? It is optional: the main protection remains the key, UFW and Fail2ban.")"; then
             info "$(ui "Omitiendo cambio de puerto: SSH sigue en $CURRENT_PORT y continuamos con el resto." "Skipping port change: SSH stays on $CURRENT_PORT and we carry on.")"
             return 0
         fi
@@ -2249,10 +2443,6 @@ fase_7_change_port() {
     fi
     success "$(ui "Puerto nuevo preparado; falta comprobar una conexión desde el cliente." "New port prepared; still need to verify a connection from the client.")"
 
-    echo
-    warn "$(ui "Prueba en OTRA sesión, desde donde tengas tu clave privada (esta sesión sigue viva):" "Test in ANOTHER session, from wherever your private key is (this one stays alive):")"
-    echo -e "   ${CYAN}ssh -p $NEW_PORT $USERNAME@$PUBLIC_IP${NC}"
-    echo
     if [[ $NON_INTERACTIVE -eq 1 ]]; then
         if [[ $drop_old -eq 1 ]]; then
             confirm_port_change || return 1
@@ -2260,12 +2450,10 @@ fase_7_change_port() {
             info "$(ui "Puerto $CURRENT_PORT sigue abierto: ciérralo tú cuando verifiques." "Port $CURRENT_PORT is still open: close it yourself once you verify.")"
         fi
     else
-        local token=""
-        read -rp "$(ui "Si entró por $NEW_PORT, escribe acceso-ok (otra cosa revierte): " "If you got in via $NEW_PORT, type access-ok (anything else reverts): ")" token
-        if token_ok "$token"; then
+        if confirm_access "$NEW_PORT" "$(ui "Esta prueba usa el puerto nuevo $NEW_PORT. El puerto $CURRENT_PORT sigue abierto hasta que confirmes el resultado." "This test uses new port $NEW_PORT. Port $CURRENT_PORT stays open until you confirm the result.")"; then
             confirm_port_change || return 1
         else
-            revert_now "$(ui "Sin confirmación, vuelvo al puerto $CURRENT_PORT." "Without confirmation, back to port $CURRENT_PORT.")"
+            revert_now "$(ui "Elegiste restaurar o no se pudo confirmar SSH por el puerto nuevo $NEW_PORT." "You chose restore or SSH could not be confirmed on new port $NEW_PORT.")"
             return 1
         fi
     fi
@@ -2321,7 +2509,7 @@ finalize_old_port_removal() {
 final_summary() {
     header "$(ui "RESUMEN DEL ESTADO" "STATE SUMMARY")"
     detect_ssh_activation
-    local port eff permitroot passauth allowusers pending listening
+    local port eff permitroot passauth allowusers pending listening ufw_state f2b_state updates_state
     port=$(current_ssh_port)
     listening=$(listening_ports)
     eff=$(sshd -T 2>/dev/null || true)
@@ -2329,31 +2517,49 @@ final_summary() {
     passauth=$(printf '%s\n' "$eff"      | awk '/^passwordauthentication /{print $2}')
     allowusers=$(printf '%s\n' "$eff"    | awk '/^allowusers /{$1=""; sub(/^[[:space:]]+/,""); print}')
     pending=$(list_pending_rollbacks)
+    ufw_state=$(ufw status 2>/dev/null | awk '/^Status:/{print $2; exit}' || true)
+    f2b_state=$(systemctl is-active fail2ban 2>/dev/null || true)
+    updates_state=$(systemctl is-active unattended-upgrades 2>/dev/null || true)
 
-    if [[ "$permitroot" == "no" && "$passauth" == "no" ]]; then
-        echo "  $(ui "Acceso cerrado: solo clave pública, solo usuarios listados." "Access locked: key only, listed users only.")"
+    if [[ $RECOVERY_OCCURRED -eq 1 ]]; then
+        error "$(ui "CAMBIOS DE ACCESO RESTAURADOS DE FORMA SEGURA" "ACCESS CHANGES RESTORED SAFELY")"
+        echo "  $(ui "Motivo:" "Reason:") $RECOVERY_REASON"
+        echo "  $(ui "Se restauraron SSH, UFW y Fail2ban al estado anterior al cambio que no se confirmó." "SSH, UFW and Fail2ban were restored to the state before the unconfirmed change.")"
+        echo "  $(ui "Se conservaron el usuario, la clave pública instalada, sudo y las actualizaciones." "The user, installed public key, sudo and updates were kept.")"
+        echo "  $(ui "Siguiente paso: revisa la prueba desde otra terminal y vuelve a ejecutar solo la fase pendiente." "Next step: review the test from another terminal and rerun only the pending phase.")"
+    elif [[ "$permitroot" == "no" && "$passauth" == "no" ]]; then
+        success "$(ui "HARDENING DEL ACCESO COMPLETADO" "ACCESS HARDENING COMPLETED")"
+        echo "  $(ui "Root y la contraseña SSH están desactivados. Entran con clave los usuarios permitidos: ${allowusers:-$USERNAME}." "Root and SSH password access are disabled. Users allowed with a key: ${allowusers:-$USERNAME}.")"
+        if [[ $ACCESS_TEST_CONFIRMED -eq 1 ]]; then
+            echo "  $(ui "La prueba externa de esta ejecución fue confirmada por la persona operadora." "The operator confirmed this run's external test.")"
+        else
+            echo "  $(ui "El estado técnico está endurecido. Si no hiciste una prueba externa en esta ejecución, usa la opción 13 ahora." "The technical state is hardened. If you did not do an external test in this run, use option 13 now.")"
+        fi
     else
-        echo "  ${YELLOW}$(ui "Acceso AÚN abierto:" "Access STILL open:")${NC} permitrootlogin=${permitroot:-?} passwordauthentication=${passauth:-?}"
+        warn "$(ui "HARDENING DEL ACCESO PENDIENTE" "ACCESS HARDENING PENDING")"
+        echo "  $(ui "Root SSH: ${permitroot:-desconocido}; contraseña SSH: ${passauth:-desconocida}. No declares el hardening terminado todavía." "Root SSH: ${permitroot:-unknown}; SSH password: ${passauth:-unknown}. Do not consider hardening finished yet.")"
+        echo "  $(ui "Siguiente paso: instala/prueba una clave desde tu computadora (fase 2) y repite la fase 3." "Next step: install/test a key from your computer (phase 2) and repeat phase 3.")"
     fi
 
     if guided_active; then
         echo
         if [[ "$permitroot" == "no" && "$passauth" == "no" ]]; then
-            warn "$(ui "Respalda la clave privada de tu computadora AHORA: sin ella no hay acceso, y no se puede recuperar." "Back up the private key on your computer NOW: without it there is no access, and it cannot be recovered.")"
+            warn "$(ui "Respalda la clave privada en TU computadora. No la copies al VPS ni la pegues en este script." "Back up the private key on YOUR computer. Do not copy it to the VPS or paste it into this script.")"
         else
-            warn "$(ui "Tarea pendiente: todavía se entra con contraseña, porque desde aquí no se pudo probar una conexión nueva." "Pending task: a password still works, because a new connection could not be tested from here.")"
+            warn "$(ui "Tarea pendiente: todavía se entra con contraseña. No es un hardening completo hasta probar una clave y repetir la fase 3." "Pending task: password access still works. This is not complete hardening until you test a key and repeat phase 3.")"
         fi
         echo "  $(ui "Cómo entrar mañana desde TU computadora:" "How to get in tomorrow from YOUR computer:")"
         echo -e "    ${CYAN}ssh -p ${port} ${USERNAME:-<tuusuario>}@${PUBLIC_IP}${NC}"
+        echo "  $(ui "Para probar solo con clave, añade: -o PasswordAuthentication=no" "To test key-only access, add: -o PasswordAuthentication=no")"
         echo "  $(ui "Si un día no puedes entrar:" "If one day you cannot get in:")"
-        echo "    $(ui "1. Abre la consola web del proveedor (VNC/KVM): funciona con SSH cerrado." "1. Open the provider's web console (VNC/KVM): it works with SSH closed.")"
+        echo "    $(ui "1. Abre la consola web del proveedor (VNC/KVM): es recuperación, no una prueba SSH." "1. Open the provider's web console (VNC/KVM): it is recovery, not an SSH test.")"
         echo "    $(ui "2. Entra con tu usuario y su contraseña de sistema, que no es la de SSH." "2. Log in with your user and its system password, which is not the SSH one.")"
         echo "    $(ui "3. Corre de nuevo este script y usa la opción de revertir al último snapshot." "3. Run this script again and use the revert-to-last-snapshot option.")"
         if [[ -n "${USERNAME:-}" ]] && [[ "$(password_state "$USERNAME")" != P ]]; then
             echo "  $(ui "Tu usuario aún no tiene contraseña de sistema: sin ella la consola del proveedor no te deja entrar. Ponla con" "Your user still has no system password: without it the provider console will not let you in. Set one with")"
             echo "    sudo passwd $USERNAME"
         fi
-        echo "  $(ui "Si la cuenta atrás llegó a tiempo, todo volvió solo: es un resultado normal, no un fallo." "If the countdown fired, everything reverted by itself: that is a normal outcome, not a failure.")"
+        echo "  $(ui "Si la cuenta atrás restaura cambios, es una protección normal: el resumen de arriba indica exactamente qué volvió atrás." "If the countdown restores changes, that is normal protection: the summary above states exactly what went back.")"
     fi
 
     cat <<EOF
@@ -2369,21 +2575,24 @@ EOF
         echo "     ${RED}$(ui "Ojo: sshd dice puerto $port pero el socket escucha en otra cosa." "Careful: sshd reports port $port but the socket listens elsewhere.")${NC}"
     fi
     echo
-    echo "  🔥 $(ui "UFW:" "UFW:")"
+    echo "  🔥 $(ui "UFW (estado: ${ufw_state:-desconocido}):" "UFW (status: ${ufw_state:-unknown}):")"
     ufw status 2>/dev/null | grep -E "Status|^$port/tcp|ALLOW" | head -12 | sed 's/^/     /' || true
     echo
-    echo "  🚫 $(ui "Fail2ban:" "Fail2ban:")"
+    echo "  🚫 $(ui "Fail2ban (estado: ${f2b_state:-desconocido}):" "Fail2ban (status: ${f2b_state:-unknown}):")"
     fail2ban-client status sshd 2>/dev/null | grep -E "Currently|Total" | sed 's/^/     /' || true
     grep -E "^ignoreip" "$JAIL_LOCAL" 2>/dev/null | sed "s/^/     $(ui 'excluidos: ' 'excluded: ')/" || true
     echo
-    echo "  🔄 $(ui "Actualizaciones automáticas:" "Automatic updates:")"
+    echo "  🔄 $(ui "Actualizaciones automáticas (estado: ${updates_state:-desconocido}):" "Automatic updates (status: ${updates_state:-unknown}):")"
     systemctl is-active unattended-upgrades 2>/dev/null | sed 's/^/     /' || true
-    reboot_hint
+    if [[ "$permitroot" == "no" && "$passauth" == "no" && -z "$pending" && $RECOVERY_OCCURRED -eq 0 ]]; then
+        reboot_hint
+    else
+        reboot_hint after_access_test
+    fi
     echo
-    echo "  ⏱  $(ui "Cuenta atrás pendiente: ${pending:-ninguna}" "Pending countdown: ${pending:-none}")"
+    echo "  ⏱  $(ui "Protección temporal pendiente: ${pending:-ninguna}" "Pending temporary protection: ${pending:-none}")"
     if [[ -n "$pending" ]]; then
-        echo "     $(ui "Todavía no confirmaste el acceso: pruébalo desde otra terminal y cancela con:" "You have not confirmed access yet: test it from another terminal and cancel with:")"
-        echo "       sudo systemctl stop $pending"
+        warn "$(ui "No declares éxito ni la desarmes todavía. Prueba SSH desde tu computadora y completa la fase que la creó; si no haces nada, se restaurará sola." "Do not declare success or disarm it yet. Test SSH from your computer and complete the phase that created it; if you do nothing, it restores itself.")"
     fi
     local last
     last=$(last_snapshot)
@@ -2399,7 +2608,13 @@ EOF
     warn "$(ui "Guarda tu clave privada SSH en un lugar seguro." "Keep your private SSH key somewhere safe.")"
     warn "$(ui "Ten siempre a mano la consola VNC de tu proveedor." "Always keep your provider VNC console at hand.")"
     echo
-    success "$(ui "Resumen terminado." "Summary finished.")"
+    if [[ $RECOVERY_OCCURRED -eq 1 ]]; then
+        warn "$(ui "El proceso terminó con restauración segura; revisa el siguiente paso indicado arriba." "The process ended with a safe restoration; review the next step above.")"
+    elif [[ "$permitroot" == "no" && "$passauth" == "no" && -z "$pending" ]]; then
+        success "$(ui "Resultado: acceso endurecido. Usa la opción 13 cuando quieras una verificación completa con reporte." "Result: access hardened. Use option 13 when you want a complete verification with a report.")"
+    else
+        warn "$(ui "Resultado: quedan tareas pendientes; no se presenta como hardening exitoso." "Result: tasks remain; this is not presented as successful hardening.")"
+    fi
 }
 
 # ============================================================
@@ -3187,13 +3402,17 @@ verification_run() {
     cat "$VERIFY_REPORT"
     if [[ $VERIFY_FAILURES -eq 0 && $VERIFY_PENDING -eq 0 && $NON_INTERACTIVE -eq 0 && $ASSUME_YES -eq 0 && -t 0 ]]; then
         echo
-        info "$(ui 'Prueba desde OTRA terminal una conexión nueva con clave al puerto definitivo:' 'From ANOTHER terminal test a fresh key login on the final port:')"
         address="${PUBLIC_IP:-$(audit_session_ip)}"
         address="${address:-DIRECCION_DEL_VPS}"
-        printf '  ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -p %s %s@%s\n' \
-            "$(current_ssh_port)" "$USERNAME" "$address"
-        info "$(ui 'En la nueva sesión ejecuta sudo -v && sudo -l y prueba los servicios que necesitas.' 'In the new session run sudo -v && sudo -l and test the services you need.')"
-        if read -rp "$(ui 'Si acceso, sudo y servicios funcionan, escribe acceso-ok (otra cosa deja pendientes): ' 'If access, sudo and services work, type access-ok (anything else leaves pending): ')" token && token_ok "$token"; then
+        # show_access_test_steps usa PUBLIC_IP. Para una auditoría donde no se
+        # pudo detectar, se muestra el fallback solo durante esta pantalla.
+        local saved_public_ip="$PUBLIC_IP"
+        PUBLIC_IP="$address"
+        show_access_test_steps "$(current_ssh_port)" "$(ui 'Verificación final: la configuración técnica pasó. Falta tu comprobación real desde otra terminal y de los servicios que necesitas.' 'Final verification: technical configuration passed. Your real check from another terminal and of the services you need is still required.')"
+        PUBLIC_IP="$saved_public_ip"
+        if ask_access_result \
+            "marcar la prueba externa como confirmada" "mark the external test confirmed" \
+            "dejar la verificación pendiente" "leave verification pending"; then
             VERIFY_EXTERNAL=confirmed
             # Nunca reutilizar un resultado anterior a la confirmación: un timer,
             # un reinicio o un cambio concurrente puede haber alterado el servidor.
@@ -3215,14 +3434,20 @@ verification_run() {
     echo
     printf '%s: %s\n' "$(ui 'Resultado' 'Result')" "$VERIFY_STATUS"
     printf '%s: %s\n' "$(ui 'Reporte guardado' 'Report saved')" "$VERIFY_REPORT"
-    if [[ $rc -ne 0 ]]; then
-        info "$(ui 'Revisa los pendientes/fallos del reporte y repite la verificación; el acceso externo requiere confirmación humana.' 'Review pending items/failures in the report and repeat verification; external access requires human confirmation.')"
-    fi
+    case "$rc" in
+        0) success "$(ui 'Verificación completada para el perfil y contexto mostrados. La prueba externa fue una confirmación de la persona operadora.' 'Verification completed for the displayed profile and context. The external test was an operator confirmation.')" ;;
+        2) info "$(ui 'Verificación pendiente: abre otra terminal, ejecuta el comando mostrado y repite la opción 13 tras completar los pendientes.' 'Verification pending: open another terminal, run the displayed command, and repeat option 13 after completing pending items.')" ;;
+        *) warn "$(ui 'Verificación con fallos: revisa el componente marcado en el reporte antes de cambiar o declarar exitoso el hardening.' 'Verification failed: review the component marked in the report before changing anything or declaring hardening successful.')" ;;
+    esac
     return "$rc"
 }
 
 offer_final_verification() {
     local answer=""
+    if [[ ${RECOVERY_OCCURRED:-0} -eq 1 || -n "$(list_pending_rollbacks)" ]]; then
+        info "$(ui 'No ofrezco la verificación final todavía: primero completa la fase pendiente o deja que la protección temporal restaure el estado.' 'The final verification is not offered yet: first complete the pending phase or let temporary protection restore the state.')"
+        return 0
+    fi
     if [[ $NON_INTERACTIVE -eq 1 || $ASSUME_YES -eq 1 || ! -t 0 ]]; then
         info "$(ui 'Verificación opcional disponible en el menú (13) o con --verify --user NOMBRE.' 'Optional verification is available in menu (13) or with --verify --user NAME.')"
         return 0
@@ -3343,19 +3568,33 @@ restore_last_snapshot() {
     fi
 }
 
+phase_label() {
+    case "$1" in
+        fase_1_user)           ui "fase 1 (cuenta administradora)" "phase 1 (admin account)" ;;
+        fase_2_ssh_key)        ui "fase 2 (clave SSH)" "phase 2 (SSH key)" ;;
+        fase_2b_updates)       ui "fase 2.5 (actualizaciones de hoy)" "phase 2.5 (today's updates)" ;;
+        fase_3_harden_ssh)     ui "fase 3 (protección SSH)" "phase 3 (SSH protection)" ;;
+        fase_4_ufw)            ui "fase 4 (cortafuegos)" "phase 4 (firewall)" ;;
+        fase_5_fail2ban)       ui "fase 5 (Fail2ban)" "phase 5 (Fail2ban)" ;;
+        fase_6_auto_updates)   ui "fase 6 (actualizaciones automáticas)" "phase 6 (automatic updates)" ;;
+        fase_7_change_port)    ui "fase 7 (puerto SSH)" "phase 7 (SSH port)" ;;
+        *)                     printf '%s' "$1" ;;
+    esac
+}
+
 run_all_fases() {
     local step
     for step in fase_1_user fase_2_ssh_key fase_2b_updates fase_3_harden_ssh fase_4_ufw \
                 fase_5_fail2ban fase_6_auto_updates; do
         if ! "$step"; then
-            error "$(ui "El proceso se detuvo en $step." "The process stopped at $step.")"
+            error "$(ui "El proceso se detuvo en $(phase_label "$step")." "The process stopped in $(phase_label "$step").")"
             return 1
         fi
     done
     # La fase 7 se llama siempre: sin --port decide sola (pregunta en modo
     # interactivo; en desatendido u --yes se omite desde su propio guard).
     if ! fase_7_change_port; then
-        error "$(ui "El proceso se detuvo en fase_7_change_port." "The process stopped at fase_7_change_port.")"
+        error "$(ui "El proceso se detuvo en $(phase_label fase_7_change_port)." "The process stopped in $(phase_label fase_7_change_port).")"
         return 1
     fi
     return 0
@@ -3372,17 +3611,20 @@ main_menu() {
   $(ui "Puerto SSH:" "SSH port:")   ${CURRENT_PORT}  $( [[ $SOCKET_ACTIVATED -eq 1 ]] && echo '(ssh.socket)' || echo '(ssh.service)' )
   $(ui "Snapshots:" "Snapshots:")    $(find "$SNAPSHOTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')  $(ui "Cuenta atrás:" "Countdown:") $( [[ -n "$(list_pending_rollbacks)" ]] && echo "$(ui 'PENDIENTE' 'PENDING')" || echo "$(ui 'ninguna' 'none')" )
 
-  1) $(ui "Ejecutar TODAS las fases (recomendado)" "Run ALL phases (recommended)")
-  2) $(ui "Fase 1: Crear usuario con sudo utilizable" "Phase 1: Create a user with working sudo")
-  3) $(ui "Fase 2: Clave SSH (validada)" "Phase 2: SSH key (validated)")
-  4) $(ui "Fase 3: Endurecer SSH + prueba de acceso" "Phase 3: Harden SSH + access test")
-  5) $(ui "Fase 4: Activar UFW" "Phase 4: Enable UFW")
-  6) $(ui "Fase 5: Instalar Fail2ban" "Phase 5: Install Fail2ban")
-  7) $(ui "Fase 6: Actualizaciones automáticas" "Phase 6: Automatic updates")
-  8) $(ui "Fase 7: Cambiar puerto SSH" "Phase 7: Change the SSH port")
-  9) $(ui "Ver resumen del estado actual" "Show the current state summary")
- 10) $(ui "Cancelar cuenta atrás pendiente" "Cancel a pending countdown")
- 11) $(ui "Revertir al último snapshot" "Revert to the latest snapshot")
+  $(ui "ASISTENTE RECOMENDADO" "RECOMMENDED ASSISTANT")
+  1) $(ui "Guiarme por todas las fases, con pruebas de acceso" "Guide me through all phases, with access tests")
+
+  $(ui "ACCIONES AVANZADAS (úsalas en orden)" "ADVANCED ACTIONS (use them in order)")
+  2) $(ui "1. Preparar cuenta administradora con sudo" "1. Prepare an admin account with sudo")
+  3) $(ui "2. Añadir una clave pública SSH" "2. Add an SSH public key")
+  4) $(ui "3. Probar clave y cerrar root/contraseña" "3. Test key and close root/password")
+  5) $(ui "4. Activar UFW y repetir prueba de acceso" "4. Enable UFW and repeat access test")
+  6) $(ui "5. Activar Fail2ban" "5. Enable Fail2ban")
+  7) $(ui "6. Activar actualizaciones automáticas" "6. Enable automatic updates")
+  8) $(ui "7. Cambiar puerto SSH (opcional)" "7. Change SSH port (optional)")
+  9) $(ui "Ver resultado, pendientes y siguiente paso" "Show result, pending work and next step")
+ 10) $(ui "Conservar cambios tras probar SSH y sudo" "Keep changes after testing SSH and sudo")
+ 11) $(ui "Restaurar el último snapshot de acceso" "Restore the latest access snapshot")
  12) $(ui "Auditar el estado sin tocar nada" "Audit the state without touching anything")
  13) $(ui "Verificar el hardening aplicado y guardar reporte" "Verify applied hardening and save a report")
   0) $(ui "Salir" "Exit")
@@ -3394,7 +3636,10 @@ EOF
             1)
                 if ! fase_0_welcome; then continue; fi
                 if ! run_all_fases; then
-                    error "$(ui "Proceso incompleto; la cuenta atrás pendiente revierte sola si no la cancelas." "Process incomplete; the pending countdown reverts on its own unless you cancel it.")"
+                    error "$(ui "Proceso incompleto. El resumen indica qué se restauró o qué fase debes repetir." "Process incomplete. The summary states what was restored or which phase you must repeat.")"
+                    final_summary
+                    pause
+                    continue
                 fi
                 final_summary
                 offer_final_verification || true
@@ -3408,7 +3653,16 @@ EOF
             7) fase_6_auto_updates || pause ;;
             8) fase_7_change_port || pause ;;
             9) final_summary; pause ;;
-            10) cancel_all_rollbacks; pause ;;
+            10)
+                header "$(ui "Conservar cambios pendientes" "Keep pending changes")"
+                info "$(ui "Usa esta opción solo después de probar desde otra terminal que SSH con clave y sudo funcionan. Cancelarla convierte en permanentes los cambios protegidos." "Use this option only after testing from another terminal that key-based SSH and sudo work. Cancelling makes the protected changes permanent.")"
+                if confirm "$(ui "¿Ya hiciste esa prueba y quieres conservar los cambios?" "Have you done that test and want to keep the changes?")"; then
+                    cancel_all_rollbacks
+                else
+                    info "$(ui "No se cambió nada; la protección temporal sigue activa." "Nothing changed; temporary protection remains active.")"
+                fi
+                pause
+                ;;
             11) restore_last_snapshot; pause ;;
             12) audit_report; pause ;;
             13) verification_run || true; pause ;;
@@ -3425,10 +3679,8 @@ on_exit() {
     local rc=$?
     if [[ $ROLLBACK_ARMED -eq 1 ]]; then
         echo
-        error "$(ui "Sales con la cuenta atrás ARMADA ($ROLLBACK_JOB.service)." "You are leaving with the countdown ARMED ($ROLLBACK_JOB.service).")"
-        error "$(ui "Si nadie la cancela, en ${ROLLBACK_MINUTES}m SSH/UFW/fail2ban vuelven atrás." "If nobody cancels it, in ${ROLLBACK_MINUTES}m SSH/UFW/fail2ban revert.")"
-        error "$(ui "Ya compruebas el acceso y la cancelas con:" "Confirm access, then cancel it with:")"
-        echo "    sudo systemctl stop $ROLLBACK_JOB.timer"
+        warn "$(ui "Sales con protección temporal activa. Si no completas la prueba, en ${ROLLBACK_MINUTES} min SSH, UFW y Fail2ban volverán al estado anterior." "You are leaving with temporary protection active. If you do not complete the test, SSH, UFW and Fail2ban return to the previous state in ${ROLLBACK_MINUTES} min.")"
+        info "$(ui "No hagas nada con el temporizador por ahora. Vuelve a entrar desde tu computadora, prueba SSH con clave y sudo, y completa la fase para conservar los cambios." "Do not touch the timer for now. Log in again from your computer, test key-based SSH and sudo, and complete the phase to keep the changes.")"
     fi
     return $rc
 }
@@ -3451,9 +3703,10 @@ main() {
         verification_run || verify_rc=$?
         exit "$verify_rc"
     fi
-    check_original_user
     detect_session_kind
     resolve_guided_mode
+    choose_ui_language
+    check_original_user
     mkdir -p "$STATE_DIR" "$SNAPSHOTS_DIR"
     chmod 700 "$STATE_DIR" "$SNAPSHOTS_DIR"
     exec 9>"$STATE_DIR/run.lock"

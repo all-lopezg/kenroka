@@ -93,7 +93,7 @@ expect_match "y el menu sigue disponible despues" "Revertir al último snapshot"
 
 echo "  sobre un VPS ya endurecido (misma auditoría, otro diagnóstico)"
 start_admin_session
-hard="$(run_vps_in 'acceso-ok\n' --run-all --yes --skip-lockdown \
+hard="$(run_vps_in 's\n' --run-all --yes --skip-lockdown \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 expect_eq "el endurecido terminó bien" 0 "$?"
 expect_match "UFW quedó activo" "Status: active" "$(ufw_active)"

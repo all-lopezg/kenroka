@@ -20,8 +20,8 @@ while True:
     if not data:
         break
     output += data
-    if not answered and b"escribe acceso-ok" in output:
-        os.write(fd, b"acceso-ok\n")
+    if not answered and "¿La prueba funcionó?".encode() in output:
+        os.write(fd, b"s\n")
         answered = True
 _, status = os.waitpid(pid, 0)
 sys.stdout.write(output.decode(errors="replace"))

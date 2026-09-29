@@ -12,7 +12,7 @@ echo "  corrida guiada con --no-upgrade y aviso de reinicio pendiente"
 start_admin_session
 on_server "touch /var/run/reboot-required" >/dev/null
 
-out="$(run_vps_in 's\nacceso-ok\nn\ns\nacceso-ok\nn\n' --run-all \
+out="$(run_vps_in 's\ns\ns\nn\ns\ns\nn\n' --run-all \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 

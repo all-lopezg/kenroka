@@ -38,7 +38,7 @@ expect_eq 'verificar no instala otra cuenta atrás' '' "$(pending_rollbacks)"
 # --yes tampoco puede aprobar automáticamente desde una terminal real.
 out="$(on_server "script -q -e -c 'bash $SCRIPT --lang es --verify --user tester --port 2222 --yes' /dev/null" 2>&1)"; rc=$?
 expect_eq '--yes con terminal sigue pendiente' 2 "$rc"
-expect_nomatch 'no pide un token con --yes' 'escribe acceso-ok' "$out"
+expect_nomatch 'no pide una confirmación externa con --yes' '¿La prueba funcionó' "$out"
 
 # La conexión y sudo se comprueban de verdad en el cliente antes del token.
 on_client 'ssh -p 2222 -i /keys/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null tester@server "sudo -n true"' >/dev/null 2>&1
@@ -63,7 +63,7 @@ on_server 'systemd-run --unit=secure-vps-rollback-verification-fixture --on-acti
 out="$(on_server 'python3 /tests/helpers/verify-pty.py' 2>&1)"; rc=$?
 expect_eq 'cuenta atrás activa impide resultado exitoso' 2 "$rc"
 expect_match 'detecta temporizador real pendiente' 'Cuenta atrás pendiente' "$out"
-expect_nomatch 'con cuenta atrás no pide aprobación final' 'escribe acceso-ok' "$out"
+expect_nomatch 'con cuenta atrás no pide aprobación final' '¿La prueba funcionó' "$out"
 expect_match 'verificar conserva el temporizador' 'secure-vps-rollback-verification-fixture.timer' "$(pending_rollbacks)"
 on_server 'systemctl stop secure-vps-rollback-verification-fixture.timer' >/dev/null
 

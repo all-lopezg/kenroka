@@ -8,8 +8,9 @@ source "$HERE/lib.sh"
 echo "  simulando: operador sin flags de automatización que rechaza el 2222"
 start_admin_session
 
-# fase 0 's' | fase 3 acceso-ok | fase 4 no abrir puertos, activar UFW, acceso-ok | fase 7 'n'
-out="$(run_vps_in 's\nacceso-ok\nn\ns\nacceso-ok\nn\n' --run-all \
+# fase 0 's' | fase 3 preprueba y prueba posterior | fase 4 no abrir,
+# activar UFW y prueba posterior | fase 7 'n'
+out="$(run_vps_in 's\ns\ns\nn\ns\ns\nn\n' --run-all \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 

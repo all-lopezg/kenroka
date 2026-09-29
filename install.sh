@@ -15,7 +15,7 @@
 # Por qué existe este archivo en vez de apuntar el curl directamente al script:
 # con `curl | bash` el stdin del proceso es la tubería, así que cualquier `read`
 # del script se come las siguientes líneas de sí mismo. secure-vps.sh necesita
-# preguntar varias veces (el acceso-ok, el puerto, la clave), así que se
+# preguntar varias veces (la confirmación de acceso, el puerto, la clave), así que se
 # descarga, se verifica y se arranca con la terminal conectada (< /dev/tty).
 #
 # Este archivo NO lee del teclado: solo baja, comprueba y entrega el control.

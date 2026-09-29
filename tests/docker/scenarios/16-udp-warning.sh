@@ -13,7 +13,7 @@ expect_eq "el 5353/udp está a la escucha" "si" \
     "$(on_server "ss -Huln | grep -qE ':5353\b' && echo si || echo no")"
 
 echo "  primera pasada (--yes): avisa de ambos, no abre nada"
-out="$(run_vps_in 'acceso-ok\n' --run-all --yes --skip-lockdown \
+out="$(run_vps_in 's\n' --run-all --yes --skip-lockdown \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 printf '%s\n' "$out" | grep -E 'escucha|puertos:' | head -4 | sed 's/^/    > /'

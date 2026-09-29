@@ -12,12 +12,13 @@ echo "  (tarda ~90s: es el temporizador de verdad, no un mock)"
 on_server_in '' "systemctl is-system-running >/dev/null 2>&1; echo listo" >/dev/null
 prl0="$(sshd_get permitrootlogin)"
 
-# `sleep | script` deja el stdin abierto sin enviar nada: el gate se queda
-# esperando y el script sigue vivo con la cuenta atrás armada.
+# La primera respuesta confirma la preprueba de clave. Después `sleep` deja el
+# stdin abierto sin enviar nada: el checkpoint posterior espera y la cuenta
+# atrás sigue viva.
 # La sesión SSH del operador es lo que permite al script cerrar el acceso.
 start_admin_session
 $DOCKER_COMPOSE_CMD -f "$COMPOSE" exec -d server bash -lc \
-    "sleep 600 | runuser -u ubuntu -- sudo -n bash $SCRIPT --run-all --yes \
+    "(printf 's\\n'; sleep 600) | runuser -u ubuntu -- sudo -n bash $SCRIPT --run-all --yes \
         --rollback-minutes 1 --user tester \
         --pubkey-file /keys/id_ed25519.pub --sudo nopasswd > /tmp/run04.log 2>&1"
 

@@ -9,9 +9,9 @@ source "$HERE/lib.sh"
 echo "  simulando: sin clave por flag, sesión SSH real, elige la clave 1"
 start_admin_session
 
-# fase 0 's' | fase 2 número de clave | fase 3 acceso-ok | fase 4 no abrir
-# puertos, activar UFW, acceso-ok | fase 7 rechaza el consejo
-out="$(run_vps_in 's\n1\nacceso-ok\nn\ns\nacceso-ok\nn\n' --run-all \
+# fase 0 's' | fase 2 número de clave | fase 3 preprueba y prueba posterior |
+# fase 4 no abrir puertos, activar UFW, prueba posterior | fase 7 rechaza
+out="$(run_vps_in 's\n1\ns\ns\nn\ns\ns\nn\n' --run-all \
         --user tester --sudo nopasswd 2>&1)"
 rc=$?
 

@@ -11,14 +11,14 @@ echo "  simulando: sesión de consola (docker exec, sin SSH) y sin --pubkey"
 prl0="$(sshd_get permitrootlogin)"
 
 # fase 0 's' | fase 2 elige la clave autorizada número 1 | fase 4 no abrir
-# puertos, activar UFW. Nada más: en consola no se pide acceso-ok ni puerto.
+# puertos, activar UFW. Nada más: en consola no se pide confirmación SSH ni puerto.
 out="$(run_vps_in 's\n1\nn\ns\n' --run-all --user tester --sudo nopasswd 2>&1)"
 rc=$?
 
 expect_eq "termina bien" 0 "$rc"
 expect_match "avisa de que está en la consola" "consola del proveedor" "$out"
 expect_match "reutiliza una clave ya autorizada" "Reutilizando la clave número" "$out"
-expect_match "fase 3 en modo suave" "MODO SUAVE" "$out"
+expect_match "fase 3 declara hardening parcial" "HARDENING PARCIAL" "$out"
 expect_eq "no cerró root" "$prl0" "$(sshd_get permitrootlogin)"
 expect_eq "y dejó la contraseña activa" "yes" "$(sshd_get passwordauthentication)"
 expect_eq "SSH sigue en el 22" "22" "$(ssh_ports)"

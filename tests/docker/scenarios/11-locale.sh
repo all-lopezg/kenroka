@@ -25,15 +25,11 @@ out="$(help_out '' --lang fr --help)"
 expect_eq "--lang fr se rechaza" 1 "$?"
 expect_match "explica los valores válidos" "es|en" "$out"
 
-echo "  el token de confirmación no se traduce"
-for lang in es en; do
-    n="$(on_server "grep -c '\"acceso-ok\"' $SCRIPT")"
-    if [[ "${n:-0}" -ge 1 ]]; then
-        ok "--lang $lang conserva el token acceso-ok en el código"
-    else
-        bad "--lang $lang perdió el token acceso-ok del código"
-    fi
-done
+echo "  la confirmación usa una decisión visible, no un token oculto"
+out="$(on_server "grep -n '¿La prueba funcionó?.*\[s\]' $SCRIPT || true")"
+expect_match "muestra conservar o restaurar en español" "¿La prueba funcionó" "$out"
+expect_eq "no conserva el helper del token antiguo" "" \
+    "$(on_server "grep -E '^(access_token|token_ok)\\(\\)' $SCRIPT || true")"
 
 echo "  corrida completa en inglés (cabeceras y resumen, no solo --help)"
 start_admin_session

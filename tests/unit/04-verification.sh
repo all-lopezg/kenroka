@@ -3,19 +3,23 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
-extract_fns ui token_ok valid_username world_or_group_writable audit_eff_val \
+extract_fns ui valid_username world_or_group_writable audit_eff_val \
     audit_eff_rest audit_session_ip verification_item verification_expect \
     verification_port_contains verification_key_ok verification_ssh \
     verification_user verification_firewall verification_fail2ban \
     verification_updates verification_rollbacks verification_collect \
-    verification_result verification_run offer_final_verification
+    verification_result ssh_test_command show_access_test_steps ask_access_result \
+    verification_run offer_final_verification
 info() { :; }
+warn() { :; }
+success() { :; }
 error() { printf '%s\n' "$*" >&2; }
 reset_fixture() {
     USERNAME=tester; SUDO_MODE=nopasswd; NEW_PORT=2222; SCRIPT_VERSION=test
     STATE_DIR="$WORK/state"; SNAPSHOTS_DIR="$WORK/snaps"; REBOOT_FLAG="$WORK/reboot"
     VERIFY_EXTERNAL=unconfirmed; VERIFY_FAILURES=0; VERIFY_PENDING=0
     NON_INTERACTIVE=0; ASSUME_YES=0; PUBLIC_IP=203.0.113.9
+    BOLD=''; CYAN=''; NC=''
     SOCKET_ACTIVATED=0; SSH_CONNECTION='198.51.100.7 45000 203.0.113.9 2222'
     INACTIVE_SERVICE=''; DISABLED_SERVICE=''; KEY_VALID=1; KEY_MODE=600; KEY_OWNER=tester
     SUDO_RC=0; SUDO_LIST_RC=0; PASS_STATE=P; SSH_SYNTAX_RC=0; ROOT_POLICY=no
@@ -208,11 +212,12 @@ pty_fixture="$WORK/pty-fixture.sh"
 {
     echo 'set -uo pipefail'
     declare -p WORK
-    declare -f ui token_ok valid_username world_or_group_writable audit_eff_val audit_eff_rest audit_session_ip \
+    declare -f ui valid_username world_or_group_writable audit_eff_val audit_eff_rest audit_session_ip \
         verification_item verification_expect verification_port_contains verification_key_ok verification_ssh \
         verification_user verification_firewall verification_fail2ban verification_updates verification_rollbacks \
-        verification_collect verification_result verification_run offer_final_verification \
-        info error reset_fixture id user_home existing_key_present _file_mode _file_owner password_state \
+        verification_collect verification_result ssh_test_command show_access_test_steps ask_access_result \
+        verification_run offer_final_verification \
+        info warn success error reset_fixture id user_home existing_key_present _file_mode _file_owner password_state \
         visudo sudo runuser detect_ssh_activation listening_ports current_ssh_port pgrep systemctl sshd has_ufw ufw \
         has_fail2ban timeout fail2ban-client apt-config list_pending_rollbacks date hostname
     cat <<'FIXTURE'
@@ -247,8 +252,8 @@ while True:
     out += data
     if sys.argv[2] == 'offer' and not offered and b'[S/n]' in out:
         os.write(fd, b'\n'); offered = True
-    if not answered and b'escribe acceso-ok' in out:
-        os.write(fd, b'acceso-ok\n'); answered = True
+    if not answered and b'\xc2\xbfLa prueba funcion' in out:
+        os.write(fd, b's\n'); answered = True
 _, status = os.waitpid(pid, 0)
 sys.stdout.write(out.decode(errors='replace'))
 sys.exit(os.waitstatus_to_exitcode(status))

@@ -14,7 +14,7 @@ SNAPSHOT_FILES=(
 
 echo "  primera pasada: endurecer y confirmar SSH en 2222"
 start_admin_session
-out1="$(run_vps_in 'acceso-ok\nacceso-ok\nacceso-ok\n' "${CMD_ARGS[@]}" --port 2222 2>&1)"
+out1="$(run_vps_in 's\ns\ns\ns\n' "${CMD_ARGS[@]}" --port 2222 2>&1)"
 rc1=$?
 expect_eq "el hardening inicial termina bien" 0 "$rc1"
 expect_eq "existe el hardening que se deberá restaurar" si "$(hardening_exists)"
@@ -39,12 +39,13 @@ if [[ $FAIL -ne 0 ]]; then
 fi
 
 echo "  segunda pasada: confirmar fase 3 y negar el cambio a 2223"
-# UFW ya está activo: solo se confirma fase 3 y se niega el token del puerto.
-out2="$(run_vps_in 'acceso-ok\nacceso-no-dado\n' "${CMD_ARGS[@]}" --port 2223 2>&1)"
+# UFW ya está activo: se preprueba la clave, se confirma SSH y se restaura el
+# cambio de puerto de forma explícita.
+out2="$(run_vps_in 's\ns\nrevertir\n' "${CMD_ARGS[@]}" --port 2223 2>&1)"
 rc2=$?
 expect_eq "negar el último token devuelve error" 1 "$rc2"
 expect_match "alcanzó la transición a 2223 antes de revertir" "SSH escuchando en:.*2222.*2223" "$out2"
-expect_match "revierte por negar el cambio de puerto, no por otro error" "Sin confirmación, vuelvo al puerto 2222" "$out2"
+expect_match "revierte por negar el cambio de puerto, no por otro error" "puerto nuevo 2223" "$out2"
 
 for ((i=0; i<${#SNAPSHOT_FILES[@]}; i++)); do
     file="${SNAPSHOT_FILES[$i]}"

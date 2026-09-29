@@ -33,8 +33,10 @@ Para fijar una versión concreta:
 curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | KENROKA_VERSION=vX.Y.Z bash
 ```
 
-Antes de empezar: ten abierta la consola web de tu proveedor y prepara una segunda
-terminal para la prueba de acceso SSH.
+Antes de empezar, ten disponible la consola web / de recuperación de tu proveedor y
+prepara una segunda terminal en **tu computadora** para la prueba de acceso SSH. La
+consola del proveedor sirve para recuperar el VPS; no demuestra que una conexión SSH
+nueva desde Internet funcione.
 
 El one-liner lanza directo el asistente guiado. Si prefieres elegir fases sueltas, o
 ver el estado sin cambiar nada, descarga el script y corrélo sin argumentos: el menú
@@ -47,6 +49,15 @@ curl -fsSL -o secure-vps.sh \
 less secure-vps.sh
 sudo bash secure-vps.sh
 ```
+
+En una ejecución guiada e interactiva, el asistente primero permite elegir español o
+inglés. La elección describe a quien administra el VPS, no el locale del servidor.
+Para fijarla y omitir esa pregunta, usa `--lang es` o `--lang en`:
+
+```bash
+sudo bash secure-vps.sh --lang es
+```
+
 ¿Quieres el diagnóstico antes de que cambie algo? `--audit` es de solo lectura: quién
 puede entrar, qué acepta realmente `sshd`, qué puertos están expuestos y qué falta endurecer. No
 escribe ningún archivo y no hace ninguna petición saliente.
@@ -54,6 +65,40 @@ escribe ningún archivo y no hace ninguna petición saliente.
 ```bash
 sudo bash secure-vps.sh --audit > auditoria.txt
 ```
+
+## Flujo guiado
+
+Cada fase guiada empieza indicando qué cambiará, qué debes hacer ahora y qué
+protección queda activa. El recorrido normal es:
+
+1. **Fase 1 — Administrador y sudo:** crear o elegir el administrador no-root que conservará
+   el acceso al VPS.
+2. **Fase 2 — Clave SSH:** instalar una clave pública para ese administrador. El par se crea
+   en tu computadora; al VPS llega solo la línea pública.
+3. **Fase 2.5 — Actualizaciones pendientes:** revisar o aplicar actualizaciones mientras el
+   acceso original todavía está disponible.
+4. **Fase 3 — Hardening de SSH:** primero demostrar que la clave funciona en una sesión SSH
+   nueva; después cerrar root y la autenticación por contraseña, y repetir la prueba.
+5. **Fase 4 — UFW:** revisar los puertos TCP y UDP que escuchan, activar el cortafuegos y
+   repetir la prueba SSH externa porque UFW cambió el camino de red.
+6. **Fases 5 y 6 — Fail2ban y actualizaciones automáticas:** configurar las protecciones restantes.
+7. **Fase 7 — Cambio opcional de puerto SSH:** conservar el puerto anterior, probar el nuevo
+   y quitar el anterior solo después de que la prueba funcione.
+
+### Clave SSH: qué debes entregar
+
+Crea el par de claves en **tu computadora**, por ejemplo con `ssh-keygen -t ed25519`,
+y pega el contenido completo del archivo `.pub` correspondiente. Una clave pública
+empieza con un tipo como `ssh-ed25519`. Nunca pegues, subas ni copies el archivo
+privado (`id_ed25519` sin `.pub`); se queda en tu computadora.
+
+Una cuenta creada en la fase 1 no tiene contraseña SSH. Para esa cuenta nueva, pega
+la clave pública cuando se solicite: `ssh-copy-id` normalmente no podrá entrar. Para
+una cuenta **existente** cuya contraseña SSH conoces, `ssh-copy-id -p PUERTO
+USUARIO@HOST` es una alternativa opcional. Si todavía no tienes una clave utilizable,
+el asistente permite volver a ver las instrucciones, continuar con límites SSH no
+restrictivos que dejan root y la autenticación por contraseña activos, o salir sin
+cambiar el acceso SSH.
 
 ## Verificar el hardening aplicado
 
@@ -73,10 +118,14 @@ guarda un reporte con fecha, equipo, versión, contexto SSH y resultados en
 `/var/lib/secure-vps/reports/`, accesible solo por root (directorio `700`, archivo `600`).
 La verificación no aplica configuraciones ni cancela cuentas atrás.
 
-Si todas las comprobaciones técnicas pasan, pide abrir **otra conexión SSH** con
-clave, probar `sudo -v && sudo -l` y los servicios necesarios desde tu equipo, y
-confirmarlo escribiendo `acceso-ok`. Después vuelve a comprobar el estado técnico.
-El reporte distingue esa declaración del usuario de las comprobaciones del servidor.
+Si todas las comprobaciones técnicas pasan, muestra el comando SSH exacto para abrir
+en **otra terminal de tu computadora**. En esa sesión nueva, comprueba el usuario
+esperado, ejecuta `whoami && sudo -v && sudo -l` y prueba los servicios que necesitas.
+Al volver al asistente, elige `[s]` para marcar la prueba externa como confirmada o
+`[n]` para dejar la verificación pendiente. Después de confirmar vuelve a comprobar
+el estado técnico. La consola del proveedor es para recuperación y no cuenta como
+esta prueba SSH externa. El reporte distingue la declaración de quien opera el VPS
+de las comprobaciones del servidor.
 
 | Resultado | Código de salida | Significado |
 |---|---|---|
@@ -110,28 +159,38 @@ La regla importante es simple:
 
 > No cerrar el acceso SSH sin haber comprobado antes que la configuración nueva funciona.
 
-- Antes de restringir el acceso, `secure-vps` comprueba la configuración efectiva de `sshd`.
-- Al empezar el cierre arranca una cuenta atrás: 10 minutos por defecto. Durante esa ventana:
-  1. Abre una sesión SSH nueva desde otra terminal.
-  2. Comprueba que puedes entrar con normalidad.
-  3. Vuelve a la sesión original.
-  4. Confirma el acceso nuevo escribiendo `acceso-ok`.
-- Si la confirmación no llega antes de que expire la cuenta atrás, los cambios se revierten solos.
+- Antes de restringir el acceso, `secure-vps` comprueba la configuración efectiva de
+  `sshd` y pide una **prueba previa**. Muestra el comando SSH exacto que debe usar
+  solo la clave. Si la prueba previa no funciona, root y la autenticación por
+  contraseña quedan activos y solo se aplican límites SSH no restrictivos.
+- Después de cerrar SSH, activar UFW o cambiar el puerto SSH, empieza una cuenta atrás
+  de 10 minutos por defecto. Durante esa ventana:
+  1. Mantén abierta la terminal original como respaldo.
+  2. En otra terminal de **tu computadora**, ejecuta el comando exacto que muestra el asistente.
+  3. Comprueba que entra como el administrador elegido; ejecuta
+     `whoami && sudo -v && sudo -l` y prueba cada servicio que decidiste mantener público.
+  4. Vuelve a la terminal original y elige `[s]` para conservar el cambio o `[n]`
+     para restaurar el cambio de acceso.
+- Pulsar Enter o escribir una respuesta no reconocida no restaura nada: el asistente
+  vuelve a explicar la elección mientras la cuenta atrás sigue activa. Elegir
+  restaurar, o no poder confirmar el acceso, restaura el cambio de acceso. Si dejas
+  correr la cuenta atrás, también se restaura automáticamente al expirar.
+- La cuenta atrás restaura solo SSH, UFW y Fail2ban al estado anterior a esa fase. El
+  administrador, la clave pública instalada, sudo y las actualizaciones permanecen.
+  Al conservar el cambio, la cuenta atrás se cancela automáticamente.
 - Los cambios de SSH, UFW y Fail2ban dejan snapshots; el menú restaura el más reciente que aún no se haya revertido.
 
 Si una cuenta atrás sigue pendiente al pasar a otra fase, su reversión restaura
 el estado anterior a esa cuenta atrás, incluidos los cambios posteriores de SSH,
 UFW y Fail2ban. Una confirmación que llega después de la reversión se rechaza.
 
-El token sigue el idioma de la interfaz — `acceso-ok` en español, `access-ok` en inglés —
-pero **los dos se aceptan siempre**, para que nadie se quede fuera por una traducción.
-
 ## Requisitos
 
 - Ubuntu **22.04** o **24.04**. Otras versiones de Ubuntu se detectan y se avisa, pero no están cubiertas por la suite de pruebas.
 - Acceso root o un `sudo` que funcione.
 - Una segunda terminal para probar el acceso SSH.
-- Recomendado encarecidamente tener disponible la consola web / de recuperación de tu proveedor.
+- Recomendado encarecidamente tener disponible la consola web / de recuperación de
+  tu proveedor; úsala para recuperar el VPS, no como prueba SSH externa.
 
 ## Verifica la clave de firma
 
@@ -169,7 +228,7 @@ sudo bash secure-vps.sh --help
 | `--skip-lockdown` | Prepara el servidor sin el cierre de acceso definitivo. |
 | `--allow-lockdown` | Cierra el acceso sin la confirmación humana. Úsalo entendiendo las implicaciones de recuperación. |
 | `--upgrade` / `--no-upgrade` | Aplicar, o solo reportar, las actualizaciones pendientes. |
-| `--lang es\|en` | Fuerza el idioma detectado. |
+| `--lang es\|en` | Elige el idioma de la interfaz y omite la pregunta de idioma del asistente guiado. |
 | `--audit` | Reporte de estado de solo lectura: qué está abierto, qué está expuesto y qué correr después. |
 | `--verify --user NOMBRE` | Verificación posterior con reporte privado; códigos `0` exitoso, `2` pendiente, `1` fallo. |
 
@@ -180,11 +239,12 @@ sudo bash secure-vps.sh --help
 La suite corre el script contra systemd real en contenedor, en Ubuntu 22.04 y 24.04.
 Cubre el cierre y el rollback, la cuenta atrás disparando de verdad, el cambio de
 puerto y sus conflictos, la idempotencia byte a byte, el flujo guiado de primera
-vez, el aviso de puertos UDP, el rescate desde el menú y la verificación final con
-confirmación humana, permisos del reporte y detección de servicios caídos.
+vez con pruebas reales de acceso externo solo por clave, el aviso de puertos UDP,
+el rescate desde el menú y la verificación final con confirmación humana, permisos
+del reporte y detección de servicios caídos.
 
-- **21** escenarios end-to-end
-- **330** asertos unitarios
+- **22** escenarios end-to-end
+- **345** asertos unitarios
 - **17** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash

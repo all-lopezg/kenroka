@@ -9,9 +9,9 @@ source "$HERE/lib.sh"
 echo "  simulando: operador guiado que acepta el 2222 propuesto"
 start_admin_session
 
-# fase 0 's' | fase 3 acceso-ok | fase 4 no abrir puertos, activar UFW, acceso-ok
-# | fase 7 's', puerto por defecto (Enter) y acceso-ok
-out="$(run_vps_in 's\nacceso-ok\nn\ns\nacceso-ok\ns\n\nacceso-ok\n' --run-all \
+# fase 0 's' | fase 3 preprueba y prueba posterior | fase 4 no abrir,
+# activar UFW y prueba posterior | fase 7 's', puerto por defecto (Enter) y prueba
+out="$(run_vps_in 's\ns\ns\nn\ns\ns\ns\n\ns\n' --run-all \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 printf '%s\n' "$out" | grep -iE 'Recomendado|omite|puerto' | head -6 | sed 's/^/    > /'

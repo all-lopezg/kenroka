@@ -9,7 +9,7 @@ echo "  simulando: 'ya tengo otra sesión abierta y funciona'"
 start_admin_session
 ADMIN_IP="$(client_ip)"
 
-out="$(run_vps_in 'acceso-ok\nacceso-ok\n' --run-all --yes \
+out="$(run_vps_in 's\ns\ns\n' --run-all --yes \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 

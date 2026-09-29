@@ -12,7 +12,7 @@ CMD_ARGS=(--run-all --yes --user tester --pubkey-file /keys/id_ed25519.pub --sud
 start_admin_session
 
 echo "  primera pasada"
-out1="$(run_vps_in 'acceso-ok\nacceso-ok\nacceso-ok\n' "${CMD_ARGS[@]}" 2>&1)"; rc1=$?
+out1="$(run_vps_in 's\ns\ns\ns\n' "${CMD_ARGS[@]}" 2>&1)"; rc1=$?
 expect_eq "primera pasada ok" 0 "$rc1"
 state1="$(on_server "sshd -T | grep -E '^(permitrootlogin|passwordauthentication|allowusers|maxauthtries)' | sort")"
 ports1="$(ssh_ports)"
@@ -21,7 +21,7 @@ expect_eq "se pudo consultar las reglas iniciales de UFW" 0 "$?"
 expect_match "el conteo inicial incluye reglas de acceso" "^[1-9][0-9]*$" "$rules1"
 
 echo "  segunda pasada sobre el mismo servidor"
-out2="$(run_vps_in 'acceso-ok\nacceso-ok\nacceso-ok\n' "${CMD_ARGS[@]}" 2>&1)"; rc2=$?
+out2="$(run_vps_in 's\ns\ns\n' "${CMD_ARGS[@]}" 2>&1)"; rc2=$?
 expect_eq "segunda pasada también termina bien" 0 "$rc2"
 expect_match "reconoce que el usuario ya existe" "ya existe" "$out2"
 expect_match "reconoce que la clave ya estaba" "ya estaba" "$out2"

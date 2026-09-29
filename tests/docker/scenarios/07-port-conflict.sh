@@ -13,7 +13,7 @@ expect_eq "el 2222 está ocupado antes de correr" "si" \
 before="$(listening)"
 # La fase 7 se salta si ve consola de proveedor: hace falta la sesión SSH.
 start_admin_session
-out="$(run_vps_in 'acceso-ok\n' --run-all --yes --port 2222 --skip-lockdown \
+out="$(run_vps_in 's\n' --run-all --yes --port 2222 --skip-lockdown \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 

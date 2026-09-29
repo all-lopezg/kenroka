@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 03 · La puerta de acceso: el operador NO confirma poder entrar con la clave
-# nueva. El script debe cerrar, detectar que no hay confirmación y REVERTIR.
+# 03 · La clave se prueba antes de cerrar; luego el operador elige restaurar
+# explícitamente tras el cambio. El script debe revertir con una explicación.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib.sh"
@@ -14,13 +14,14 @@ before_ports="$(sshd_ports)"
 prl0="$(sshd_get permitrootlogin)"
 n_before="$(list_snapshots)"
 
-out="$(run_vps_in 'acceso-no-dado\n' --run-all --yes \
+out="$(run_vps_in 's\nrevertir\n' --run-all --yes \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 printf '%s\n' "$out" | grep -iE 'revierto|revierte|rollback' | head -5 | sed 's/^/    > /'
 
-expect_match "anuncia la cuenta atrás antes de cerrar" "Cuenta atrás armada" "$out"
-expect_match "revertirá al no recibir el token" "No confirmaste el acceso" "$out"
+expect_match "anuncia la protección temporal antes de cerrar" "Protección temporal activa" "$out"
+expect_match "explica que la restauración terminó" "RESTAURACIÓN SEGURA COMPLETADA" "$out"
+expect_match "aclara qué quedó restaurado" "SSH, UFW y Fail2ban" "$out"
 expect_eq "sale con código de error (un revert no es un éxito)" 1 "$rc"
 expect_eq "el acceso queda como estaba: root sigue entrando" 0 "$(ssh_login root 22 >/dev/null 2>&1; echo $?)"
 expect_eq "PasswordAuthentication vuelve a yes" "yes" "$(sshd_get passwordauthentication)"

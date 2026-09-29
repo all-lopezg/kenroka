@@ -8,7 +8,7 @@ source "$HERE/lib.sh"
 echo "  simulando: 'pasa SSH al 2222 y cierra el 22'"
 start_admin_session
 
-out="$(run_vps_in 'acceso-ok\nacceso-ok\nacceso-ok\n' --run-all --yes --port 2222 \
+out="$(run_vps_in 's\ns\ns\ns\n' --run-all --yes --port 2222 \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc=$?
 printf '%s\n' "$out" | grep -iE 'ssh.socket|drop-in|escucha|puerto' | head -8 | sed 's/^/    > /'

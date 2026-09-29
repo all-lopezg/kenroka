@@ -31,7 +31,7 @@ FAIL2BAN_BACKEND="systemd"
 FAIL2BAN_LOGPATH=""
 ADMIN_IPS="198.51.100.7"
 
-extract_fns hardening_set_ports write_fail2ban_jail \
+extract_fns phase_guide hardening_set_ports write_fail2ban_jail \
             listening_ports current_ssh_port verify_effective_access user_home \
             validate_pubkey warn_listening_services existing_key_present \
             detect_admin_ips resolve_pubkey _pubkey_normalize lockdown_possible \
