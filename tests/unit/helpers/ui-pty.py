@@ -17,6 +17,7 @@ responses = {
     'restore': ['2'],
     'result': ['h', ''],
     'failed': [''],
+    'preflight': ['2', ''],
     'plain': [],
     'dumb': [],
     'menu': ['2', 'b', '3', 'b', '0'],

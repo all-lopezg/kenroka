@@ -100,7 +100,8 @@ administrador, puerto y estado de la operación. El recorrido tiene **8 pasos**
   con la etiqueta “COPIAR Y EJECUTAR” y el lugar donde debes ejecutarlos.
   Copia solo las líneas del comando; no incluyen un prompt `$` o `>`.
 - El ancho se recalcula al dibujar. En terminales de menos de 60 columnas se
-  eliminan los marcos; los comandos largos usan `\` para poder copiarlos completos.
+  eliminan los marcos; los comandos se imprimen en una sola línea lógica, sin `\` añadidas.
+  La terminal puede envolver visualmente esa línea según su ancho.
 - `--audit`, `--verify`, `--non-interactive`, la salida redirigida y `TERM=dumb`
   conservan una presentación de texto sin pantallas ni marcos. `--experto`
   mantiene las explicaciones breves en la interfaz interactiva.
@@ -204,8 +205,9 @@ La regla importante es simple:
 
 - Antes de restringir el acceso, `secure-vps` comprueba la configuración efectiva de
   `sshd` y pide una **prueba previa**. Muestra el comando SSH exacto que debe usar
-  solo la clave. Si la prueba previa no funciona, root y la autenticación por
-  contraseña quedan activos y solo se aplican límites SSH no restrictivos.
+  solo la clave. Si la prueba previa no funciona o no se confirma, la guía se
+  detiene antes de cambiar SSH o activar UFW y explica cómo revisar la clave.
+  Siguen disponibles las opciones explícitas de endurecimiento parcial.
 - Después de cerrar SSH, activar UFW o cambiar el puerto SSH, empieza una cuenta atrás
   de 10 minutos por defecto. Durante esa ventana:
   1. Mantén abierta la terminal original como respaldo.

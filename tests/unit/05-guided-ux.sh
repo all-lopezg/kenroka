@@ -43,6 +43,8 @@ GUIDED=1
 echo '== comando y pasos de prueba SSH'
 cmd="$(ssh_test_command 2222)"
 has 'fuerza autenticación por clave' 'PreferredAuthentications=publickey' "$cmd"
+has 'permite claves del agente en la prueba' 'IdentitiesOnly=no' "$cmd"
+has 'desactiva teclado interactivo' 'KbdInteractiveAuthentication=no' "$cmd"
 has 'desactiva contraseña en la prueba' 'PasswordAuthentication=no' "$cmd"
 has 'incluye el puerto concreto' '-p 2222 admin@203.0.113.9' "$cmd"
 out="$(show_access_test_steps 2222 'Prueba posterior al firewall.')"
@@ -79,6 +81,9 @@ out="$(cat "$WORK/preflight-output")"
 check 'n antes del cierre mantiene el acceso abierto' 1 "$rc"
 check 'no marca una clave no probada' 0 "$KEY_TESTED"
 has 'declara que el cierre aún no ocurre' 'todavía no cerraré root ni el acceso con contraseña' "$out"
+has 'explica el fallo de autenticación' 'Permission denied' "$out"
+has 'indica cómo volver a probar' '1.4 repite la prueba' "$out"
+has 'detiene recorrido antes de UFW' 'antes de cambiar SSH o activar UFW' "$out"
 has 'da el siguiente resultado comprensible' 'No cerraré root ni la contraseña' "$out"
 
 echo '== sugerencia de puerto disponible'
@@ -143,5 +148,29 @@ os.waitpid(pid, 0)
 sys.stdout.buffer.write(out)
 PTY
 check 'limpia y mueve cursor solo en modo interactivo' $'\033[2J\033[H' "$(cat "$WORK/clear-output")"
+
+echo '== una preprueba fallida detiene cambios y recorrido'
+extract_fns fase_3_harden_ssh run_all_fases phase_label
+existing_key_present() { return 0; }
+log() { :; }
+snapshot_state() { printf 'UNEXPECTED_SNAPSHOT\n'; return 1; }
+NON_INTERACTIVE=0 ON_CONSOLE=0 OPT_SKIP_LOCKDOWN=0 ALLOW_LOCKDOWN=0
+for ready in 0 1; do
+    KEY_READY=$ready KEY_TESTED=0
+    fase_3_harden_ssh < "$WORK/preflight-input" > "$WORK/phase-preflight-output"; rc=$?
+    out="$(cat "$WORK/phase-preflight-output")"
+    check "clave preparada=$ready: fase detenida" 1 "$rc"
+    check "clave preparada=$ready: sigue sin probar" 0 "$KEY_TESTED"
+    hasnt "clave preparada=$ready: no prepara cambios" 'UNEXPECTED_SNAPSHOT' "$out"
+    check "clave preparada=$ready: resultado pendiente" 'Pendiente; la prueba SSH no fue confirmada' "$UI_PHASE_RESULT"
+done
+fase_1_user() { :; }
+fase_2_ssh_key() { KEY_READY=1; KEY_TESTED=0; }
+fase_2b_updates() { :; }
+fase_4_ufw() { printf 'UNEXPECTED_UFW\n'; }
+out="$(run_all_fases < "$WORK/preflight-input")"; rc=$?
+check 'la guía completa también se detiene' 1 "$rc"
+hasnt 'la guía no alcanza UFW tras prueba fallida' 'UNEXPECTED_UFW' "$out"
+hasnt 'la guía no prepara cambios SSH tras prueba fallida' 'UNEXPECTED_SNAPSHOT' "$out"
 
 summary

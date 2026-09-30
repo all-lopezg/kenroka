@@ -4,13 +4,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 extract_fns ui info warn success error header pause confirm confirm_labels phase_label \
-    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text
+    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight
 {
     printf 'set -euo pipefail\n'
     declare -f ui_visual ui_width ui_rule ui_text ui_panel ui_menu_text ui_read ui_screen ui_command \
         ui_message ui_help ui_phase_finish run_phase clear_screen ui info warn success error header pause \
         confirm confirm_labels phase_label phase_guide guided_active ssh_test_command show_access_test_steps \
-        ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text
+        ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight
     cat <<'FIXTURE'
 UI_INPUT_TTY=1
 NON_INTERACTIVE=0 AUDIT_MODE=0 VERIFY_MODE=0 UI_PLAIN=0 GUIDED=1 ASSUME_YES=0
@@ -35,6 +35,7 @@ fase_1_user() {
 }
 case "$1" in
     access|restore)
+        GREEN=$'\033[0;32m' BOLD=$'\033[1m' NC=$'\033[0m'
         ROLLBACK_ARMED=1
         show_access_test_steps 24022 'Primero prueba SSH y sudo desde tu computadora.'
         ask_access_result 'conservar cambios' 'keep changes' 'restaurar cambios' 'restore changes' && rc=0 || rc=$?
@@ -48,6 +49,11 @@ case "$1" in
         # Función de fase sin operaciones del sistema: confirma y muestra resultado.
         eval "$(declare -f fase_1_user | sed 's/\[\[ \$1 == decision \]\]/[[ decision == decision ]]/')"
         run_phase fase_1_user
+        ;;
+    preflight)
+        fase_3_harden_ssh() { confirm_key_preflight 24022; }
+        run_phase fase_3_harden_ssh && rc=0 || rc=$?
+        printf 'PHASE_RESULT=%s\n' "$rc"
         ;;
     failed)
         fase_3_harden_ssh() { error 'DIAGNOSTICO QUE DEBE SEGUIR VISIBLE'; RECOVERY_OCCURRED=1; return 1; }
@@ -81,7 +87,7 @@ case "$1" in
         GREEN=$'\033[0;32m' BOLD=$'\033[1m' NC=$'\033[0m'
         if [[ $1 == keys_windows ]]; then CLIENT_OS=windows; UI_LANG=en; fi
         if [[ $1 == keys_plain ]]; then NON_INTERACTIVE=1; fi
-        key_howto_text
+        key_howto_text confirm_key_preflight
         ;;
     username)
         USERNAME=''
@@ -114,6 +120,8 @@ has 'Enter no confirma' 'Aún no se tomó ninguna decisión' "$OUT"
 has 'opción 1 conserva' 'ACCESS_RESULT=0' "$OUT"
 has 'explica protección temporal' 'Protección temporal activa' "$OUT"
 has 'comando SSH mantiene la autenticación por clave' 'PreferredAuthentications=publickey' "$OUT"
+has 'SSH destacado con color y negrita' $'\033[1m\033[0;32m  ssh -o' "$(cat "$WORK/access-80.raw")"
+has 'SSH en una sola línea lógica' "  $(ssh_test_command 24022)" "$OUT"
 run_ui restore 80
 has 'opción 2 restaura' 'ACCESS_RESULT=1' "$OUT"
 
@@ -135,6 +143,11 @@ echo '== resultados y fallos'
 run_ui result 80
 has 'no confunde clave instalada con acceso probado' 'Pendiente; falta probar SSH' "$OUT"
 has 'espera antes de la siguiente fase' 'Pulsa Enter para continuar' "$OUT"
+run_ui preflight 80
+has 'preprueba no confirmada queda pendiente' 'Pendiente; la prueba SSH no fue confirmada' "$OUT"
+has 'preprueba mantiene ayuda sobre clave visible' 'Permission denied' "$OUT"
+has 'preprueba ofrece detener y revisar' 'No funcionó; detener y revisar' "$OUT"
+has 'preprueba conserva resultado fallido' 'PHASE_RESULT=1' "$OUT"
 run_ui failed 80
 has 'conserva diagnóstico visible' 'DIAGNOSTICO QUE DEBE SEGUIR VISIBLE' "$OUT"
 has 'restauración no se anuncia como éxito' 'Restaurado; fase pendiente' "$OUT"
@@ -147,16 +160,16 @@ has 'termina con un resultado explícito' 'Confirmado para esta fase' "$OUT"
 echo '== ancho, comandos copiables y salida sencilla'
 run_ui access 42
 hasnt 'terminal estrecha no usa marcos anchos' '+---' "$OUT"
-has 'comando partido mantiene continuación de shell' $'\\\n' "$OUT"
+hasnt 'comando no añade continuaciones de shell' $'\\\n' "$OUT"
 python3 - "$WORK/access-42" <<'PY'
 import sys
 lines = open(sys.argv[1]).read().splitlines()
-long = [line for line in lines if len(line) > 42]
+long = [line for line in lines if len(line) > 42 and not line.lstrip().startswith('ssh ')]
 if long:
     print('líneas demasiado largas:', repr(long))
     sys.exit(1)
 PY
-check 'prueba SSH cabe en 42 columnas' 0 "$?"
+check 'instrucciones caben en 42 columnas; comando conserva una línea' 0 "$?"
 run_ui resize 80
 has 'recalcula el ancho al redimensionar' 'NARROW' "$OUT"
 run_ui plain 80

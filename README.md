@@ -99,7 +99,8 @@ administrator, port and operation state. The guided flow has **8 steps**
   “COPY AND RUN” with their execution location. Copy only the command lines;
   they do not include a `$` or `>` shell prompt.
 - Width is recalculated when drawing. Below 60 columns the frames disappear;
-  long commands use `\` continuations so the complete command stays copyable.
+  commands are printed as one logical line, without added `\` continuations.
+  The terminal may visually wrap that line to its width.
 - `--audit`, `--verify`, `--non-interactive`, redirected output and `TERM=dumb`
   retain text output without screens or frames. `--experto` keeps explanations
   short in the interactive interface.
@@ -201,8 +202,9 @@ The most important rule is simple:
 
 - Before restricting access, `secure-vps` checks the effective `sshd` configuration
   and asks for a **pre-check**. It prints the exact key-only SSH command. If the
-  pre-check does not work, root and password authentication stay enabled and only
-  non-restrictive SSH limits can be applied.
+  pre-check does not work or is not confirmed, the guide stops before changing SSH
+  or enabling UFW and explains how to review the key. Explicit partial-hardening
+  options remain available.
 - After SSH is closed, UFW is enabled, or the SSH port changes, a 10-minute
   countdown starts by default. During that window:
   1. Keep the original terminal open as the backup.

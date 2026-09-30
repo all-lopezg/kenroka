@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.3
+# Versión: 1.4.4
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.3"
+readonly SCRIPT_VERSION="1.4.4"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -213,19 +213,16 @@ ui_screen() {
 }
 
 ui_command() {
-    local command="$1" destination="${2:-}" width line previous=""
+    local command="$1" destination="${2:-}" width
     if ! ui_visual; then printf '     %s\n' "$command"; return 0; fi
     width=$(ui_width)
     echo
     ui_text "$(ui 'COPIAR Y EJECUTAR' 'COPY AND RUN')${destination:+ · $destination}"
     if ((width >= 60)); then ui_rule; else ui_text '---'; fi
     printf '%s' "${BOLD:-}${GREEN:-}"
-    # Las continuaciones mantienen el comando copiable en terminales estrechas.
-    while IFS= read -r line; do
-        [[ -n "$previous" ]] && printf '  %s \\\n' "$previous"
-        previous="$line"
-    done < <(printf '%s\n' "$command" | fmt -w "$((width-6))")
-    [[ -n "$previous" ]] && printf '  %s\n' "$previous"
+    # Una sola línea lógica, sin saltos ni barras añadidos por el asistente.
+    # La terminal puede envolverla visualmente según el ancho de la ventana.
+    printf '  %s\n' "$command"
     printf '%s' "${NC:-}"
     if ((width >= 60)); then ui_rule; else ui_text '---'; fi
     echo
@@ -270,7 +267,9 @@ ui_phase_finish() {
     local rc="$1" state="${UI_PHASE_RESULT:-}"
     ui_visual || return 0
     if [[ $rc -ne 0 ]]; then
-        if [[ ${RECOVERY_OCCURRED:-0} -eq 1 && ${UI_PHASE_ACCESS:-0} -eq 1 ]]; then
+        if [[ ${UI_ACCESS_PRECHECK_FAILED:-0} -eq 1 ]]; then
+            state="${UI_PHASE_RESULT:-}"
+        elif [[ ${RECOVERY_OCCURRED:-0} -eq 1 && ${UI_PHASE_ACCESS:-0} -eq 1 ]]; then
             state="$(ui 'Restaurado; fase pendiente' 'Restored; phase pending')"
         else
             state="$(ui 'Detenido; revisa el error' 'Stopped; review the error')"
@@ -300,7 +299,7 @@ ui_phase_finish() {
 run_phase() {
     local step="$1" rc=0
     local UI_MANAGED_PHASE=1 UI_PHASE_MESSAGES='' UI_GUIDE='' UI_PHASE_ACCESS=0
-    local UI_ACCESS_PORT='' UI_ACCESS_CONTEXT=''
+    local UI_ACCESS_PORT='' UI_ACCESS_CONTEXT='' UI_ACCESS_PRECHECK_FAILED=0
     local UI_PHASE_TITLE
     UI_PHASE_TITLE=$(phase_label "$step")
     case "$step" in
@@ -2049,7 +2048,7 @@ resolve_guided_mode() {
 
 ssh_test_command() {
     local port="${1:-$CURRENT_PORT}"
-    printf 'ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -p %s %s@%s' \
+    printf 'ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o IdentitiesOnly=no -p %s %s@%s' \
         "$port" "$USERNAME" "$PUBLIC_IP"
 }
 
@@ -2120,13 +2119,21 @@ confirm_key_preflight() {
     show_access_test_steps "$port" "$(ui "Esta es la prueba PREVIA: todavía no cerraré root ni el acceso con contraseña." "This is the PRE-CHECK: root and password access are not closed yet.")"
     if ask_access_result \
         "La clave funciona; continuar con el cierre" "The key works; continue with the lockdown" \
-        "No cerrar el acceso" "Do not close access"; then
+        "No funcionó; detener y revisar" "It did not work; stop and review"; then
         KEY_TESTED=1
         success "$(ui "Prueba previa confirmada. Ahora sí es seguro aplicar el cierre de SSH." "Pre-check confirmed. It is now safe to apply the SSH lockdown.")"
         return 0
     fi
     KEY_TESTED=0
+    UI_PHASE_RESULT="$(ui 'Pendiente; la prueba SSH no fue confirmada' 'Pending; SSH test was not confirmed')"
+    UI_ACCESS_PRECHECK_FAILED=1
     warn "$(ui "La clave no quedó confirmada. No cerraré root ni la contraseña en esta ejecución." "The key was not confirmed. I will not close root or password access in this run.")"
+    info "$(ui 'Detengo este recorrido antes de cambiar SSH o activar UFW. Mantén esta sesión abierta.' 'Stopping this flow before changing SSH or enabling UFW. Keep this session open.')"
+    info "$(ui 'Permission denied significa que el servidor respondió, pero no aceptó la clave ofrecida. Comprueba que la clave privada de tu computadora corresponde a la pública instalada para este usuario.' 'Permission denied means the server responded but did not accept the offered key. Check that your computer private key matches the public key installed for this user.')"
+    info "$(ui 'Si usaste la ruta habitual al crear la clave, prueba este comando en TU computadora:' 'If you used the usual path when creating the key, try this command on YOUR computer:')"
+    ui_command "ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -p $port $USERNAME@$PUBLIC_IP" "$(ui 'TU COMPUTADORA · SOLO SI ESA ES TU CLAVE' 'YOUR COMPUTER · ONLY IF THAT IS YOUR KEY')"
+    info "$(ui 'Si tu clave tiene otra ruta, reemplaza ~/.ssh/id_ed25519 por la ruta del archivo privado, sin .pub. No lo copies al VPS.' 'If your key has another path, replace ~/.ssh/id_ed25519 with the private file path, without .pub. Do not copy it to the VPS.')"
+    info "$(ui 'En el menú, 1.2 permite revisar o cambiar la clave pública; 1.4 repite la prueba. No confirmes éxito hasta que SSH y sudo funcionen.' 'In the menu, 1.2 lets you review or replace the public key; 1.4 repeats the test. Do not confirm success until SSH and sudo work.')"
     return 1
 }
 
@@ -2239,7 +2246,8 @@ fase_3_harden_ssh() {
 
     if [[ $KEY_READY -ne 1 ]]; then
         if [[ -n "$USERNAME" ]] && existing_key_present "$USERNAME"; then
-            if [[ $NON_INTERACTIVE -eq 0 && $ON_CONSOLE -eq 0 && $OPT_SKIP_LOCKDOWN -eq 0 ]] && confirm_key_preflight "$CURRENT_PORT"; then
+            if [[ $NON_INTERACTIVE -eq 0 && $ON_CONSOLE -eq 0 && $OPT_SKIP_LOCKDOWN -eq 0 ]]; then
+                if ! confirm_key_preflight "$CURRENT_PORT"; then KEY_READY=0; return 1; fi
                 KEY_READY=1
                 log "$(ui "Fase 3: clave preexistente confirmada por el operador." "Phase 3: pre-existing key confirmed by the operator.")"
             else
@@ -2251,6 +2259,7 @@ fase_3_harden_ssh() {
           $OPT_SKIP_LOCKDOWN -eq 0 && $ALLOW_LOCKDOWN -eq 0 ]]; then
         if ! confirm_key_preflight "$CURRENT_PORT"; then
             KEY_READY=0
+            return 1
         fi
     fi
     if [[ $KEY_READY -ne 1 ]] || [[ $OPT_SKIP_LOCKDOWN -eq 1 ]] || ! lockdown_possible; then
