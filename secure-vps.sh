@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.4
+# Versión: 1.4.5
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.4"
+readonly SCRIPT_VERSION="1.4.5"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -2146,7 +2146,7 @@ confirm_access() {
         info "$(ui "Usuario, clave instalada, sudo y actualizaciones no se eliminan. No necesitas tocar el temporizador: se cancela automáticamente al conservar los cambios." "The user, installed key, sudo and updates are not removed. You do not need to touch the timer: it is cancelled automatically when you keep the changes.")"
     fi
     if ask_access_result \
-        "conservar cambios" "keep changes" \
+        "Conservar cambios y continuar" "Keep changes and continue" \
         "restaurar cambios de acceso" "restore access changes"; then
         ACCESS_TEST_CONFIRMED=1
         return 0
