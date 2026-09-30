@@ -95,6 +95,9 @@ administrator, port and operation state. The guided flow has **8 steps**
   pending access tests, skipped changes and restorations have distinct states.
 - During an SSH test, Enter and help **neither confirm nor restore**. The
   protection timer keeps running while you decide.
+- Copyable commands appear in separate blocks, in green and bold, labelled
+  “COPY AND RUN” with their execution location. Copy only the command lines;
+  they do not include a `$` or `>` shell prompt.
 - Width is recalculated when drawing. Below 60 columns the frames disappear;
   long commands use `\` continuations so the complete command stays copyable.
 - `--audit`, `--verify`, `--non-interactive`, redirected output and `TERM=dumb`

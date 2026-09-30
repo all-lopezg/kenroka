@@ -96,6 +96,9 @@ administrador, puerto y estado de la operación. El recorrido tiene **8 pasos**
   la prueba pendiente, los cambios omitidos y las restauraciones se distinguen.
 - En una prueba SSH, Enter y pedir ayuda **no confirman ni restauran**. El
   temporizador de protección continúa corriendo mientras decides.
+- Los comandos para copiar aparecen en bloques separados, en verde y negrita,
+  con la etiqueta “COPIAR Y EJECUTAR” y el lugar donde debes ejecutarlos.
+  Copia solo las líneas del comando; no incluyen un prompt `$` o `>`.
 - El ancho se recalcula al dibujar. En terminales de menos de 60 columnas se
   eliminan los marcos; los comandos largos usan `\` para poder copiarlos completos.
 - `--audit`, `--verify`, `--non-interactive`, la salida redirigida y `TERM=dumb`

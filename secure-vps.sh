@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.2
+# Versión: 1.4.3
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.2"
+readonly SCRIPT_VERSION="1.4.3"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -213,15 +213,22 @@ ui_screen() {
 }
 
 ui_command() {
-    local width line previous=""
-    if ! ui_visual; then printf '     %s\n' "$*"; return 0; fi
+    local command="$1" destination="${2:-}" width line previous=""
+    if ! ui_visual; then printf '     %s\n' "$command"; return 0; fi
     width=$(ui_width)
+    echo
+    ui_text "$(ui 'COPIAR Y EJECUTAR' 'COPY AND RUN')${destination:+ · $destination}"
+    if ((width >= 60)); then ui_rule; else ui_text '---'; fi
+    printf '%s' "${BOLD:-}${GREEN:-}"
     # Las continuaciones mantienen el comando copiable en terminales estrechas.
     while IFS= read -r line; do
         [[ -n "$previous" ]] && printf '  %s \\\n' "$previous"
         previous="$line"
-    done < <(printf '%s\n' "$*" | fmt -w "$((width-6))")
+    done < <(printf '%s\n' "$command" | fmt -w "$((width-6))")
     [[ -n "$previous" ]] && printf '  %s\n' "$previous"
+    printf '%s' "${NC:-}"
+    if ((width >= 60)); then ui_rule; else ui_text '---'; fi
+    echo
 }
 
 ui_message() {
@@ -1666,10 +1673,10 @@ key_howto_text() {
     if ui_visual; then
         ui_screen "$(ui 'PREPARAR LA CLAVE PÚBLICA' 'PREPARE THE PUBLIC KEY')" "$(ui 'Sin cambios de acceso' 'No access changes')"
         ui_text "$(ui 'En otra terminal de tu computadora, crea el par de claves:' 'In another terminal on your computer, create the key pair:')"
-        ui_command 'ssh-keygen -t ed25519'
+        ui_command 'ssh-keygen -t ed25519' "$(ui 'EN TU COMPUTADORA' 'ON YOUR COMPUTER')"
         ui_text "$(ui 'Acepta la ruta con Enter y elige una frase de protección. Después muestra la parte pública:' 'Accept the path with Enter and choose a passphrase. Then display the public part:')"
-        if [[ $CLIENT_OS == windows ]]; then ui_command 'Get-Content "$HOME\.ssh\id_ed25519.pub"';
-        else ui_command 'cat ~/.ssh/id_ed25519.pub'; fi
+        if [[ $CLIENT_OS == windows ]]; then ui_command 'Get-Content "$HOME\.ssh\id_ed25519.pub"' "$(ui 'POWERSHELL EN TU COMPUTADORA' 'POWERSHELL ON YOUR COMPUTER')";
+        else ui_command 'cat ~/.ssh/id_ed25519.pub' "$(ui 'EN TU COMPUTADORA' 'ON YOUR COMPUTER')"; fi
         ui_text "$(ui 'Copia la línea que empieza por ssh-ed25519 y pégala aquí. El archivo privado, sin .pub, permanece en tu computadora.' 'Copy the line starting with ssh-ed25519 and paste it here. The private file, without .pub, stays on your computer.')"
         return 0
     fi
@@ -2062,9 +2069,9 @@ show_access_test_steps() {
     [[ -n "$context" ]] && info "$context"
     ui_text "1. $(ui "Deja ESTA terminal abierta como respaldo." "Keep THIS terminal open as your backup.")"
     ui_text "2. $(ui "En otra terminal de TU computadora ejecuta:" "In another terminal on YOUR computer run:")"
-    ui_command "$(ssh_test_command "$port")"
+    ui_command "$(ssh_test_command "$port")" "$(ui 'OTRA TERMINAL DE TU COMPUTADORA' 'ANOTHER TERMINAL ON YOUR COMPUTER')"
     ui_text "3. $(ui "La nueva sesión debe mostrar el usuario '$USERNAME'. Allí ejecuta:" "The new session must show user '$USERNAME'. There run:")"
-    ui_command "whoami && sudo -v && sudo -l"
+    ui_command "whoami && sudo -v && sudo -l" "$(ui 'DENTRO DE LA NUEVA SESIÓN SSH' 'INSIDE THE NEW SSH SESSION')"
     ui_text "4. $(ui "Vuelve a esta terminal solo cuando esos pasos funcionen." "Return to this terminal only after those steps work.")"
     info "$(ui "Si tu clave privada no usa la ruta habitual, añade -i /ruta/a/tu_clave al comando." "If your private key is not in the usual location, add -i /path/to/your_key to the command.")"
     warn "$(ui "La consola web/VNC del proveedor sirve para recuperar el VPS; NO valida esta prueba SSH externa." "The provider web/VNC console is for VPS recovery; it does NOT validate this external SSH test.")"

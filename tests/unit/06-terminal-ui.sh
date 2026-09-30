@@ -4,13 +4,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 extract_fns ui info warn success error header pause confirm confirm_labels phase_label \
-    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username
+    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text
 {
     printf 'set -euo pipefail\n'
     declare -f ui_visual ui_width ui_rule ui_text ui_panel ui_menu_text ui_read ui_screen ui_command \
         ui_message ui_help ui_phase_finish run_phase clear_screen ui info warn success error header pause \
         confirm confirm_labels phase_label phase_guide guided_active ssh_test_command show_access_test_steps \
-        ask_access_result main_menu banner prompt_admin_username valid_username
+        ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text
     cat <<'FIXTURE'
 UI_INPUT_TTY=1
 NON_INTERACTIVE=0 AUDIT_MODE=0 VERIFY_MODE=0 UI_PLAIN=0 GUIDED=1 ASSUME_YES=0
@@ -76,6 +76,13 @@ case "$1" in
         restore_last_snapshot() { printf 'RAN=restore\n'; }
         main_menu
         ;;
+    keys|keys_windows|keys_plain)
+        CLIENT_OS=linux
+        GREEN=$'\033[0;32m' BOLD=$'\033[1m' NC=$'\033[0m'
+        if [[ $1 == keys_windows ]]; then CLIENT_OS=windows; UI_LANG=en; fi
+        if [[ $1 == keys_plain ]]; then NON_INTERACTIVE=1; fi
+        key_howto_text
+        ;;
     username)
         USERNAME=''
         prompt_admin_username
@@ -109,6 +116,20 @@ has 'explica protección temporal' 'Protección temporal activa' "$OUT"
 has 'comando SSH mantiene la autenticación por clave' 'PreferredAuthentications=publickey' "$OUT"
 run_ui restore 80
 has 'opción 2 restaura' 'ACCESS_RESULT=1' "$OUT"
+
+echo '== comandos destacados y copiables'
+run_ui keys 80
+has 'destino visible junto al comando' 'COPIAR Y EJECUTAR · EN TU COMPUTADORA' "$OUT"
+has 'comando de creación intacto' '  ssh-keygen -t ed25519' "$OUT"
+has 'comando público intacto' '  cat ~/.ssh/id_ed25519.pub' "$OUT"
+hasnt 'no añade prompt de shell al comando' '$ ssh-keygen' "$OUT"
+has 'color y negrita diferencian comandos' $'\033[1m\033[0;32m  ssh-keygen' "$(cat "$WORK/keys-80.raw")"
+run_ui keys_windows 80
+has 'destino de PowerShell explícito' 'POWERSHELL ON YOUR COMPUTER' "$OUT"
+has 'comando PowerShell conserva comillas' 'Get-Content "$HOME\.ssh\id_ed25519.pub"' "$OUT"
+run_ui keys_plain 80
+hasnt 'salida sencilla sin bloques visuales' 'COPIAR Y EJECUTAR' "$OUT"
+hasnt 'salida sencilla no colorea comandos' $'\033[0;32m' "$(cat "$WORK/keys_plain-80.raw")"
 
 echo '== resultados y fallos'
 run_ui result 80
