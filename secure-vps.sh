@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.5
+# Versión: 1.4.6
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.5"
+readonly SCRIPT_VERSION="1.4.6"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -2907,7 +2907,7 @@ final_summary() {
             warn "$(ui "Tarea pendiente: todavía se entra con contraseña. No es un hardening completo hasta probar una clave y repetir la fase 3." "Pending task: password access still works. This is not complete hardening until you test a key and repeat phase 3.")"
         fi
         echo "  $(ui "Cómo entrar mañana desde TU computadora:" "How to get in tomorrow from YOUR computer:")"
-        echo -e "    ${CYAN}ssh -p ${port} ${USERNAME:-<tuusuario>}@${PUBLIC_IP}${NC}"
+        ui_command "ssh -p ${port} ${USERNAME:-<tuusuario>}@${PUBLIC_IP}" "$(ui 'EN TU COMPUTADORA · ACCESO AL VPS' 'ON YOUR COMPUTER · VPS ACCESS')"
         echo "  $(ui "Para probar solo con clave, añade: -o PasswordAuthentication=no" "To test key-only access, add: -o PasswordAuthentication=no")"
         echo "  $(ui "Si un día no puedes entrar:" "If one day you cannot get in:")"
         echo "    $(ui "1. Abre la consola web del proveedor (VNC/KVM): es recuperación, no una prueba SSH." "1. Open the provider's web console (VNC/KVM): it is recovery, not an SSH test.")"
@@ -2960,7 +2960,7 @@ EOF
     echo
     echo "  🔗 $(ui "Conexión:" "Connect:")"
     if [[ -n "${USERNAME:-}" ]]; then
-        echo "     ssh -p $port $USERNAME@$PUBLIC_IP"
+        ui_command "ssh -p $port $USERNAME@$PUBLIC_IP" "$(ui 'EN TU COMPUTADORA · ACCESO AL VPS' 'ON YOUR COMPUTER · VPS ACCESS')"
     fi
     echo
     warn "$(ui "Guarda tu clave privada SSH en un lugar seguro." "Keep your private SSH key somewhere safe.")"
