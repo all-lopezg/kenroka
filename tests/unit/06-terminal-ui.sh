@@ -87,7 +87,7 @@ case "$1" in
         GREEN=$'\033[0;32m' BOLD=$'\033[1m' NC=$'\033[0m'
         if [[ $1 == keys_windows ]]; then CLIENT_OS=windows; UI_LANG=en; fi
         if [[ $1 == keys_plain ]]; then NON_INTERACTIVE=1; fi
-        key_howto_text confirm_key_preflight
+        key_howto_text
         ;;
     username)
         USERNAME=''
