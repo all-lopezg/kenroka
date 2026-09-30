@@ -203,7 +203,8 @@ todos los posibles clientes ni la seguridad completa del servidor.
 El resumen final y la opción **2.4** del menú explican cómo añadir un alias
 `mi-vps` a la configuración SSH de tu computadora. Incluyen instrucciones para
 macOS/Linux y Windows/PowerShell, el usuario y puerto efectivos, y el comando
-`ssh mi-vps`. Conserva las entradas existentes del archivo `config`; el asistente
+`ssh mi-vps`. `mi-vps` es el nombre sugerido; puedes sustituirlo por otro sin
+espacios y usar ese mismo nombre en `Host` y en `ssh`. Conserva las entradas existentes del archivo `config`; el asistente
 solo muestra instrucciones y no modifica archivos locales ni del VPS.
 
 

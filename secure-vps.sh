@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.7
+# Versión: 1.4.8
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.7"
+readonly SCRIPT_VERSION="1.4.8"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -2875,15 +2875,16 @@ ssh_alias_help() {
     ui_text "$(ui '1. Abre el archivo de configuración local. Elige el comando de tu sistema:' '1. Open your local configuration file. Choose the command for your system:')"
     ui_command 'mkdir -p ~/.ssh && nano ~/.ssh/config' 'macOS / Linux'
     ui_command 'New-Item -ItemType Directory -Force "$HOME\.ssh" | Out-Null; notepad "$HOME\.ssh\config"' 'Windows / PowerShell'
-    ui_text "$(ui '2. Añade este bloque AL PRINCIPIO del archivo, antes de otros bloques Host. Conserva lo que ya existe. Si ya usas mi-vps, elige otro nombre y úsalo también al conectar.' '2. Add this block AT THE START of the file, before other Host blocks. Preserve existing content. If you already use mi-vps, choose another name and use it when connecting too.')"
+    ui_text "$(ui '2. Añade este bloque AL PRINCIPIO del archivo, antes de otros bloques Host. Conserva lo que ya existe. mi-vps es el nombre sugerido por defecto: puedes elegir el que quieras, sin espacios (ejemplo: trabajo). Cambia solo Host mi-vps por Host trabajo; deja HostName con la dirección del VPS. Usa un nombre que no exista ya en este archivo.' '2. Add this block AT THE START of the file, before other Host blocks. Preserve existing content. mi-vps is the suggested default name: you can choose any name without spaces (example: work). Change only Host mi-vps to Host work; keep HostName as the VPS address. Choose a name that is not already used in this file.')"
     ui_panel "$(ui 'COPIAR AL ARCHIVO config · NO EJECUTAR EN LA TERMINAL' 'COPY INTO THE config FILE · DO NOT RUN IN THE TERMINAL')"
     printf '%sHost mi-vps\n    HostName %s\n    User %s\n    Port %s\n%s' "${BOLD:-}${GREEN:-}" "$PUBLIC_IP" "$USERNAME" "$port" "${NC:-}"
     ui_text "$(ui '3. Guarda el archivo. En nano: Ctrl+O, Enter y Ctrl+X. En Bloc de notas: Ctrl+S; el archivo debe llamarse config, sin .txt.' '3. Save the file. In nano: Ctrl+O, Enter, then Ctrl+X. In Notepad: Ctrl+S; the file must be named config, without .txt.')"
     ui_text "$(ui 'En macOS/Linux, ajusta los permisos del archivo después de guardarlo:' 'On macOS/Linux, set the file permissions after saving:')"
     ui_command 'chmod 600 ~/.ssh/config' 'macOS / Linux'
     ui_text "$(ui 'Si tu clave privada está en otra ruta, añade una línea IdentityFile con esa ruta dentro del bloque. La clave permanece en tu computadora.' 'If your private key is in another location, add an IdentityFile line with that path inside the block. The key stays on your computer.')"
-    ui_text "$(ui '4. Para entrar desde ahora, ejecuta en TU computadora:' '4. To connect from now on, run on YOUR computer:')"
+    ui_text "$(ui '4. Para entrar desde ahora, ejecuta en TU computadora el comando con el nombre que elegiste. Si dejaste el nombre por defecto:' '4. To connect from now on, run the command on YOUR computer using the name you chose. If you kept the default name:')"
     ui_command 'ssh mi-vps' "$(ui 'EN TU COMPUTADORA · ACCESO AL VPS' 'ON YOUR COMPUTER · VPS ACCESS')"
+    ui_text "$(ui 'Si elegiste trabajo, entra con ssh trabajo. El nombre después de ssh debe coincidir con el que escribiste después de Host.' 'If you chose work, connect with ssh work. The name after ssh must match the name you wrote after Host.')"
     ui_text "$(ui 'Mantén la sesión actual abierta hasta comprobar este acceso. Si cambias el puerto o la dirección del VPS, actualiza el bloque. Estas instrucciones también están en la opción 2.4 del menú.' 'Keep the current session open until you have checked this connection. If the VPS port or address changes, update the block. These instructions are also available in menu option 2.4.')"
 }
 
