@@ -9,7 +9,7 @@ extract_fns ui valid_username world_or_group_writable audit_eff_val \
     verification_user verification_firewall verification_fail2ban \
     verification_updates verification_rollbacks verification_collect \
     verification_result ssh_test_command show_access_test_steps ask_access_result \
-    verification_run offer_final_verification
+    verification_select_user verification_run offer_final_verification
 info() { :; }
 warn() { :; }
 success() { :; }
@@ -216,7 +216,7 @@ pty_fixture="$WORK/pty-fixture.sh"
         verification_item verification_expect verification_port_contains verification_key_ok verification_ssh \
         verification_user verification_firewall verification_fail2ban verification_updates verification_rollbacks \
         verification_collect verification_result ssh_test_command show_access_test_steps ask_access_result \
-        verification_run offer_final_verification \
+        verification_select_user verification_run offer_final_verification \
         info warn success error reset_fixture id user_home existing_key_present _file_mode _file_owner password_state \
         visudo sudo runuser detect_ssh_activation listening_ports current_ssh_port pgrep systemctl sshd has_ufw ufw \
         has_fail2ban timeout fail2ban-client apt-config list_pending_rollbacks date hostname
@@ -273,4 +273,18 @@ check '--yes tampoco confirma en una terminal real' 2 "$rc"
 run_pty offer > "$WORK/pty-output"; rc=$?
 check 'aceptar oferta por defecto ejecuta la verificación' 0 "$rc"
 has 'se ofrece al usuario como opción' '¿Quieres verificar ahora' "$(cat "$WORK/pty-output")"
+echo '== corrección de usuario desde la verificación'
+reset_fixture
+USERNAME=011235813
+printf 'root\ntester\n' > "$WORK/user-retry-input"
+verification_select_user < "$WORK/user-retry-input" > "$WORK/user-retry-output" 2>&1; rc=$?
+check 'permite corregir usuario numérico y root' 0 "$rc"
+check 'guarda el administrador corregido' tester "$USERNAME"
+USERNAME=011235813 NON_INTERACTIVE=1
+verification_select_user < /dev/null >/dev/null 2>&1; rc=$?
+check 'usuario inválido desatendido falla sin esperar' 1 "$rc"
+NON_INTERACTIVE=0
+verification_select_user < /dev/null >/dev/null 2>&1; rc=$?
+check 'EOF en corrección no entra en bucle' 1 "$rc"
+
 summary

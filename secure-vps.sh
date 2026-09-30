@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.9
+# Versión: 1.4.10
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.9"
+readonly SCRIPT_VERSION="1.4.10"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -1680,8 +1680,11 @@ ask_client_os() {
 # Cómo se crea una clave en la máquina del operador. El par NUNCA se genera en
 # el VPS: la privada no debe existir ni pasar por el servidor que se endurece.
 key_howto_text() {
+    local existing_key_hint
+    existing_key_hint="$(ui 'Si ya creaste una clave, no la generes de nuevo ni sobrescribas la existente: usa el comando que muestra el archivo .pub.' 'If you already created a key, do not generate it again or overwrite it: use the command that displays the .pub file.')"
     if ui_visual; then
         ui_screen "$(ui 'PREPARAR LA CLAVE PÚBLICA' 'PREPARE THE PUBLIC KEY')" "$(ui 'Sin cambios de acceso' 'No access changes')"
+        ui_text "$existing_key_hint"
         ui_text "$(ui 'En otra terminal de tu computadora, crea el par de claves:' 'In another terminal on your computer, create the key pair:')"
         ui_command 'ssh-keygen -t ed25519' "$(ui 'EN TU COMPUTADORA' 'ON YOUR COMPUTER')"
         ui_text "$(ui 'Acepta la ruta con Enter y elige una frase de protección. Después muestra la parte pública:' 'Accept the path with Enter and choose a passphrase. Then display the public part:')"
@@ -1690,6 +1693,7 @@ key_howto_text() {
         ui_text "$(ui 'Copia la línea que empieza por ssh-ed25519 y pégala aquí. El archivo privado, sin .pub, permanece en tu computadora.' 'Copy the line starting with ssh-ed25519 and paste it here. The private file, without .pub, stays on your computer.')"
         return 0
     fi
+    ui_text "$existing_key_hint"
     local win=0
     if [[ "$CLIENT_OS" == windows ]]; then
         win=1
@@ -1719,6 +1723,29 @@ EOF
   your computer. Whoever holds it holds your access.
 EOF
     fi
+}
+
+# Permite recuperar un pegado incorrecto sin repetir las fases anteriores.
+ensure_valid_pubkey() {
+    local choice
+    while ! validate_pubkey "$SSH_PUBKEY"; do
+        error "$(ui 'Esa clave pública no es válida: ssh-keygen la rechaza.' 'That public key is not valid: ssh-keygen rejects it.')"
+        ui_text "$(ui 'Pega SOLO la clave pública completa, en una sola línea, sin recortarla ni cambiar su contenido. Debe empezar por ssh-ed25519, ssh-rsa o ecdsa-... No pegues una contraseña ni la clave privada.' 'Paste ONLY the complete public key, on one line, without truncating or changing its contents. It must start with ssh-ed25519, ssh-rsa or ecdsa-... Do not paste a password or private key.')"
+        [[ $NON_INTERACTIVE -eq 1 ]] && return 1
+        ui_text "$(ui '1) Volver a pegar la clave   2) Mostrar de nuevo los comandos   0) Cancelar esta fase' '1) Paste the key again   2) Show the commands again   0) Cancel this phase')"
+        ui_read "$(ui 'Elige 1/2/0: ' 'Choose 1/2/0: ')" choice || return 1
+        case "$choice" in
+            1) ;;
+            2) key_howto_text ;;
+            0) return 1 ;;
+            *) continue ;;
+        esac
+        ui_text "$(ui 'Pega ahora la clave pública completa y pulsa Enter para validarla. Si es correcta, la instalaré y continuaré automáticamente:' 'Paste the complete public key now and press Enter to validate it. If it is valid, I will install it and continue automatically:')"
+        ui_read "$(ui 'Clave pública SSH: ' 'SSH public key: ')" SSH_PUBKEY || return 1
+        PUBKEY_FILE="" # La corrección manual sustituye cualquier archivo previo.
+        resolve_pubkey
+    done
+    return 0
 }
 
 fase_2_ssh_key() {
@@ -1765,7 +1792,7 @@ fase_2_ssh_key() {
                 echo
             fi
             while [[ -z "$SSH_PUBKEY" ]]; do
-                ui_text "$(ui "Pega aquí la clave pública (la línea que empieza por ssh-ed25519, ssh-rsa o ecdsa-...):" "Paste the public key here (the line beginning ssh-ed25519, ssh-rsa or ecdsa-...):")"
+                ui_text "$(ui "Pega aquí SOLO la clave pública completa en una línea (empieza por ssh-ed25519, ssh-rsa o ecdsa-...). Pulsa Enter para validarla e instalarla; si es correcta, continuaré:" "Paste ONLY the complete public key here on one line (starting with ssh-ed25519, ssh-rsa or ecdsa-...). Press Enter to validate and install it; if it is valid, I will continue:")"
                 if ! ui_read "$(ui "Clave pública SSH (Enter muestra opciones seguras): " "SSH public key (Enter shows safe options): ")" SSH_PUBKEY; then
                     return 1
                 fi
@@ -1816,11 +1843,7 @@ fase_2_ssh_key() {
         return 1
     fi
 
-    if ! validate_pubkey "$SSH_PUBKEY"; then
-        error "$(ui "Esa clave pública no es válida: ssh-keygen la rechaza." "That public key is not valid: ssh-keygen rejects it.")"
-        error "$(ui "Debe empezar con un tipo reconocido (ssh-ed25519, ssh-rsa, ecdsa-sha2-...) y base64 intacto." "It must start with a known type (ssh-ed25519, ssh-rsa, ecdsa-sha2-...) and have intact base64.")"
-        return 1
-    fi
+    ensure_valid_pubkey || return 1
     success "$(ui "Clave válida: $VALID_FINGERPRINT" "Valid key: $VALID_FINGERPRINT")"
 
     install_authorized_key "$USERNAME" "$SSH_PUBKEY" || return 1
@@ -3796,17 +3819,27 @@ verification_result() {
     return 0
 }
 
+verification_select_user() {
+    local candidate="${USERNAME:-}"
+    while ! valid_username "$candidate"; do
+        if [[ -n "$candidate" ]]; then
+            error "$(ui 'El nombre no es válido para Kenroka: debe empezar con una letra minúscula o _, no puede ser root ni solo números. Aquí se pide el usuario, no su contraseña.' 'The username is not valid for Kenroka: it must start with a lowercase letter or _, cannot be root or only digits. This asks for the username, not its password.')"
+        fi
+        if [[ $NON_INTERACTIVE -eq 1 ]]; then
+            error "$(ui 'Indica un administrador válido con --user NOMBRE.' 'Specify a valid administrator with --user NAME.')"
+            return 1
+        fi
+        ui_text "$(ui 'Escribe el nombre de una cuenta administradora existente para verificarla (ejemplo: miadmin). No se creará ningún usuario.' 'Type an existing administrator username to verify (example: myadmin). No account will be created.')"
+        ui_read "$(ui 'Usuario administrador a verificar: ' 'Administrator to verify: ')" candidate || return 1
+    done
+    USERNAME="$candidate"
+}
+
 verification_run() {
     local UI_PLAIN=1
     local RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
     local token="" rc=0 reports="$STATE_DIR/reports" address=""
-    if [[ -z "$USERNAME" ]]; then
-        ui_read "$(ui 'Usuario administrador a verificar: ' 'Administrator to verify: ')" USERNAME || return 1
-    fi
-    if ! valid_username "$USERNAME"; then
-        error "$(ui 'Indica un administrador válido con --user NOMBRE.' 'Specify a valid administrator with --user NAME.')"
-        return 1
-    fi
+    verification_select_user || return 1
     # El único estado que escribe esta opción es su reporte, privado de root.
     mkdir -p "$reports" || return 1
     chmod 700 "$STATE_DIR" "$reports" || return 1

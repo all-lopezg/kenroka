@@ -696,4 +696,38 @@ systemctl() { [[ $1 != is-enabled ]] || printf 'disabled\n'; }
 silence fail2ban_enable_boot; rc=$?
 check 'no declara éxito si sigue deshabilitado' 1 "$rc"
 
+echo '== recuperación de una clave pública incorrecta'
+extract_fns ui validate_pubkey ensure_valid_pubkey resolve_pubkey _pubkey_normalize
+ssh-keygen -q -t ed25519 -N '' -f "$WORK/recovery-key"
+good_key="$(cat "$WORK/recovery-key.pub")"
+key_howto_text() { printf 'COMMANDS_SHOWN\n'; }
+NON_INTERACTIVE=0 SSH_PUBKEY='clave incorrecta' PUBKEY_FILE="$WORK/recovery-key.pub"
+printf '2\n%s\n' "$good_key" > "$WORK/key-retry-input"
+ensure_valid_pubkey < "$WORK/key-retry-input" > "$WORK/key-retry-output" 2>&1; rc=$?
+check 'recupera el pegado inválido en la misma fase' 0 "$rc"
+check 'conserva la clave corregida' "$good_key" "$SSH_PUBKEY"
+has 'permite volver a mostrar comandos' 'COMMANDS_SHOWN' "$(cat "$WORK/key-retry-output")"
+has 'pide pública completa sin modificar' 'sin recortarla ni cambiar su contenido' "$(cat "$WORK/key-retry-output")"
+SSH_PUBKEY=incorrecta
+printf '0\n' > "$WORK/key-cancel-input"
+ensure_valid_pubkey < "$WORK/key-cancel-input" >/dev/null 2>&1; rc=$?
+check 'cancelar devuelve fallo y no instala clave' 1 "$rc"
+NON_INTERACTIVE=1
+ensure_valid_pubkey < /dev/null >/dev/null 2>&1; rc=$?
+check 'clave inválida no interactiva falla sin esperar' 1 "$rc"
+
+echo '== fase completa continúa después de corregir la clave'
+extract_fns fase_2_ssh_key
+header() { :; }
+phase_guide() { :; }
+pause() { :; }
+install_authorized_key() { printf '%s\n' "$2" > "$WORK/installed-key"; }
+verify_strictmodes() { :; }
+NON_INTERACTIVE=0 SSH_PUBKEY=incorrecta PUBKEY_FILE='' KEY_READY=0 KEY_TESTED=1
+fase_2_ssh_key < "$WORK/key-retry-input" > "$WORK/key-phase-output" 2>&1; rc=$?
+check 'corrección termina la fase satisfactoriamente' 0 "$rc"
+check 'instala exactamente la clave validada' "$good_key" "$(cat "$WORK/installed-key")"
+check 'marca la clave lista para la prueba SSH' 1 "$KEY_READY"
+check 'no confunde instalación con prueba externa' 0 "$KEY_TESTED"
+
 summary
