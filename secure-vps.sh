@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.10
+# Versión: 1.4.11
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.10"
+readonly SCRIPT_VERSION="1.4.11"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -2613,6 +2613,10 @@ fase_5_fail2ban() {
         "Esta fase no pide otra prueba SSH; evita intentos de contraseña repetidos mientras el jail queda activo." "This phase does not require another SSH test; avoid repeated password attempts while the jail becomes active."
 
     if ! command -v fail2ban-client &>/dev/null; then
+        ui_panel "$(ui 'SI APARECE UNA VENTANA DE SERVICIOS' 'IF A SERVICES DIALOG APPEARS')"
+        ui_text "$(ui 'Durante la instalación puede aparecer una ventana titulada Daemons using outdated libraries que pregunta qué servicios reiniciar.' 'During installation, a dialog titled Daemons using outdated libraries may ask which services to restart.')"
+        ui_text "$(ui 'Deja las casillas como vienen por defecto: no marques ni desmarques servicios. Pulsa Tab hasta seleccionar <Ok> y luego Enter para aceptar y continuar.' 'Leave the checkboxes at their default selections: do not select or deselect services. Press Tab until <Ok> is selected, then press Enter to accept and continue.')"
+        ui_text "$(ui 'Si también aparece un aviso de kernel pendiente, acéptalo para continuar, pero no reinicies el VPS todavía: termina primero la guía y las pruebas de acceso.' 'If a pending-kernel notice also appears, acknowledge it to continue, but do not reboot the VPS yet: first finish the guide and access tests.')"
         info "$(ui "Instalando Fail2ban..." "Installing Fail2ban...")"
         apt-get update && apt-get install -y fail2ban || return 1
     else
