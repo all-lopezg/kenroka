@@ -52,9 +52,9 @@ expect_eq 'confirmar verificación tampoco cambia la configuración' "$before" "
 
 # El menú sigue disponible después de guardar el reporte. Entrada no-tty no
 # intenta atribuir una confirmación externa al Enter ni a --yes.
-out="$(run_vps_in '13\n\n0\n' --user tester --sudo nopasswd --port 2222 --experto 2>&1)"; rc=$?
+out="$(run_vps_in '2.3\n\n0\n' --user tester --sudo nopasswd --port 2222 --experto 2>&1)"; rc=$?
 expect_eq 'se puede verificar y volver al menú' 0 "$rc"
-expect_match 'opción 13 visible' '13\).*Verificar el hardening' "$out"
+expect_match 'opción 2.3 visible' '2\.3\).*Verificar el hardening' "$out"
 expect_match 'el menú ejecuta el verificador' 'VERIFICACIÓN DEL HARDENING' "$out"
 expect_match 'no-tty informa pendientes desde menú' 'Resultado: CON PENDIENTES' "$out"
 

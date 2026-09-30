@@ -82,8 +82,12 @@ In an interactive terminal, Kenroka displays screens with the server,
 administrator, port and operation state. The guided flow has **8 steps**
 (including updates, internally called phase 2.5).
 
-- The main menu offers guided setup, results, auditing and verification. `a`
-  opens advanced actions by phase and returns to the main menu.
+- The menu uses consecutive groups: `1` setup, `2` review, `3` recovery and
+  `4` help. Actions are indented with subnumbers: `1.1` administrator, `1.2`
+  key, through `1.8` port; `2.1` results, `2.2` audit, `2.3` verification;
+  `3.1` keep and `3.2` restore. Type the complete number and press Enter.
+  `1` starts the full guide; `2` and `3` show their group, `b` returns to the
+  complete menu and `0` exits.
 - Confirmations accept `1`/`2` or the usual `y`/`n` answers. `h` shows help
   during confirmations, access tests and phase results.
 - Every phase shows its result and waits for Enter before clearing the screen.

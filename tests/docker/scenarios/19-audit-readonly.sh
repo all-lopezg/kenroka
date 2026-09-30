@@ -84,8 +84,8 @@ expect_match "pide sudo" "must run as root|debe ejecutarse como root" "$out3"
 expect_match "y sale con error" "rc=1" "$out3"
 expect_eq "aun asi no dejo archivos nuevos" "$before" "$(manifest)"
 
-echo "  la auditoría también está dentro del menú (opción 12)"
-out5="$(run_vps_in '12\n\n0\n' --skip-lockdown --user tester \
+echo "  la auditoría también está dentro del menú (opción 2.2)"
+out5="$(run_vps_in '2.2\n\n0\n' --skip-lockdown --user tester \
         --pubkey-file /keys/id_ed25519.pub --sudo nopasswd --experto 2>&1)"
 expect_eq "el menú la ofrece" 0 "$?"
 expect_match "se ve el reporte desde el menú" "AUDITORÍA DE SOLO LECTURA" "$out5"

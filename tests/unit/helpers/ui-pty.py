@@ -19,10 +19,11 @@ responses = {
     'failed': [''],
     'plain': [],
     'dumb': [],
-    'menu': ['a', '0'],
+    'menu': ['2', 'b', '3', 'b', '0'],
     'decision': ['h', '1', ''],
     'resize': [''],
     'username': ['', 'root', 'miadmin'],
+    'menu_actions': ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '2.1', '2.2', '2.3', '3.1', '1', '3.2', '0'],
 }[scenario]
 pid, fd = pty.fork()
 if pid == 0:

@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.1
+# Versión: 1.4.2
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.1"
+readonly SCRIPT_VERSION="1.4.2"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -1855,7 +1855,7 @@ reboot_hint() {
     if [[ -f "$REBOOT_FLAG" ]]; then
         warn "$(ui "Hace falta reiniciar: el kernel que está corriendo sigue siendo el viejo, así que los parches nuevos aún no hacen efecto." "A reboot is needed: the running kernel is still the old one, so the new patches are not in effect yet.")"
         if [[ "$when" == after_access_test ]]; then
-            info "$(ui "No reinicies todavía. Primero termina las pruebas de acceso y confirma los cambios; después ejecuta: sudo reboot. Al volver, usa la opción 13 para verificar." "Do not reboot yet. First finish the access tests and confirm the changes; then run: sudo reboot. Once back, use option 13 to verify.")"
+            info "$(ui "No reinicies todavía. Primero termina las pruebas de acceso y confirma los cambios; después ejecuta: sudo reboot. Al volver, usa la opción 2.3 para verificar." "Do not reboot yet. First finish the access tests and confirm the changes; then run: sudo reboot. Once back, use option 2.3 to verify.")"
         else
             echo "    sudo reboot"
         fi
@@ -2617,7 +2617,7 @@ EOF
     info "$(ui "Ejecutando dry-run..." "Running dry-run...")"
     unattended-upgrade --dry-run >> "$LOG_FILE" 2>&1 || return 1
 
-    success "$(ui "Actualizaciones automáticas activadas: el VPS revisará seguridad cada día. Si un parche pide reinicio, hazlo después de confirmar acceso y vuelve a usar la opción 13." "Automatic updates enabled: the VPS will review security daily. If a patch needs a reboot, do it after confirming access and use option 13 again.")"
+    success "$(ui "Actualizaciones automáticas activadas: el VPS revisará seguridad cada día. Si un parche pide reinicio, hazlo después de confirmar acceso y vuelve a usar la opción 2.3." "Automatic updates enabled: the VPS will review security daily. If a patch needs a reboot, do it after confirming access and use option 2.3 again.")"
 
     log "Fase 6 completada."
     pause
@@ -2875,7 +2875,7 @@ final_summary() {
         if [[ $ACCESS_TEST_CONFIRMED -eq 1 ]]; then
             echo "  $(ui "La prueba externa de esta ejecución fue confirmada por la persona operadora." "The operator confirmed this run's external test.")"
         else
-            echo "  $(ui "El estado técnico está endurecido. Si no hiciste una prueba externa en esta ejecución, usa la opción 13 ahora." "The technical state is hardened. If you did not do an external test in this run, use option 13 now.")"
+            echo "  $(ui "El estado técnico está endurecido. Si no hiciste una prueba externa en esta ejecución, usa la opción 2.3 ahora." "The technical state is hardened. If you did not do an external test in this run, use option 2.3 now.")"
         fi
     else
         warn "$(ui "HARDENING DEL ACCESO PENDIENTE" "ACCESS HARDENING PENDING")"
@@ -2953,7 +2953,7 @@ EOF
     if [[ $RECOVERY_OCCURRED -eq 1 ]]; then
         warn "$(ui "El proceso terminó con restauración segura; revisa el siguiente paso indicado arriba." "The process ended with a safe restoration; review the next step above.")"
     elif [[ "$permitroot" == "no" && "$passauth" == "no" && -z "$pending" ]]; then
-        success "$(ui "Resultado: acceso endurecido. Usa la opción 13 cuando quieras una verificación completa con reporte." "Result: access hardened. Use option 13 when you want a complete verification with a report.")"
+        success "$(ui "Resultado: acceso endurecido. Usa la opción 2.3 cuando quieras una verificación completa con reporte." "Result: access hardened. Use option 2.3 when you want a complete verification with a report.")"
     else
         warn "$(ui "Resultado: quedan tareas pendientes; no se presenta como hardening exitoso." "Result: tasks remain; this is not presented as successful hardening.")"
     fi
@@ -3782,7 +3782,7 @@ verification_run() {
     printf '%s: %s\n' "$(ui 'Reporte guardado' 'Report saved')" "$VERIFY_REPORT"
     case "$rc" in
         0) success "$(ui 'Verificación completada para el perfil y contexto mostrados. La prueba externa fue una confirmación de la persona operadora.' 'Verification completed for the displayed profile and context. The external test was an operator confirmation.')" ;;
-        2) info "$(ui 'Verificación pendiente: abre otra terminal, ejecuta el comando mostrado y repite la opción 13 tras completar los pendientes.' 'Verification pending: open another terminal, run the displayed command, and repeat option 13 after completing pending items.')" ;;
+        2) info "$(ui 'Verificación pendiente: abre otra terminal, ejecuta el comando mostrado y repite la opción 2.3 tras completar los pendientes.' 'Verification pending: open another terminal, run the displayed command, and repeat option 2.3 after completing pending items.')" ;;
         *) warn "$(ui 'Verificación con fallos: revisa el componente marcado en el reporte antes de cambiar o declarar exitoso el hardening.' 'Verification failed: review the component marked in the report before changing anything or declaring hardening successful.')" ;;
     esac
     return "$rc"
@@ -3948,55 +3948,54 @@ run_all_fases() {
 }
 
 main_menu() {
-    local option advanced=0 menu_width
+    local option section=all menu_width
     while true; do
         clear_screen
         banner
-        if ui_visual && [[ $advanced -eq 0 ]]; then
-            ui_text "$(ui 'Servidor' 'Server'): ${PUBLIC_IP:-?} · SSH: $CURRENT_PORT"
-            ui_text "$(ui 'Administrador' 'Administrator'): ${USERNAME:-${ORIGINAL_USER:-?}}"
-            ui_panel "$(ui '¿QUÉ QUIERES HACER?' 'WHAT WOULD YOU LIKE TO DO?')"
-            ui_text "1) $(ui 'Preparar o repetir la configuración guiada' 'Prepare or repeat guided setup')"
-            ui_text "9) $(ui 'Ver resultado y tareas pendientes' 'View results and pending tasks')"
-            ui_text "12) $(ui 'Revisar el estado sin cambiar nada' 'Review state without changing anything')"
-            ui_text "13) $(ui 'Verificar la configuración y el acceso' 'Verify configuration and access')"
-            ui_text "a) $(ui 'Abrir acciones avanzadas por fase' 'Open advanced actions by phase')"
-            ui_text "h) $(ui 'Ayuda' 'Help')"
-            ui_text "0) $(ui 'Salir' 'Exit')"
-        else
+        ui_text "$(ui 'Servidor' 'Server'): ${PUBLIC_IP:-?} · SSH: $CURRENT_PORT"
+        ui_text "$(ui 'Administrador' 'Administrator'): ${USERNAME:-${ORIGINAL_USER:-?}}"
+        ui_panel "$(ui '¿QUÉ QUIERES HACER?' 'WHAT WOULD YOU LIKE TO DO?')"
         menu_width=$(ui_width)
-        UI_RENDER_WIDTH="$menu_width" ui_menu_text <<EOF
-  $(ui "IP pública:" "Public IP:")   ${PUBLIC_IP}
-  $(ui "Usuario:" "User:")      ${USERNAME:-$(ui "<sin definir>" "<undefined>")}
-  $(ui "Puerto SSH:" "SSH port:")   ${CURRENT_PORT}  $( [[ $SOCKET_ACTIVATED -eq 1 ]] && echo '(ssh.socket)' || echo '(ssh.service)' )
-  $(ui "Snapshots:" "Snapshots:")    $(find "$SNAPSHOTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')  $(ui "Cuenta atrás:" "Countdown:") $( [[ -n "$(list_pending_rollbacks)" ]] && echo "$(ui 'PENDIENTE' 'PENDING')" || echo "$(ui 'ninguna' 'none')" )
-
-  $(ui "ASISTENTE RECOMENDADO" "RECOMMENDED ASSISTANT")
-  1) $(ui "Guiarme por todas las fases, con pruebas de acceso" "Guide me through all phases, with access tests")
-
-  $(ui "ACCIONES AVANZADAS (úsalas en orden)" "ADVANCED ACTIONS (use them in order)")
-  2) $(ui "1. Preparar cuenta administradora con sudo" "1. Prepare an admin account with sudo")
-  3) $(ui "2. Añadir una clave pública SSH" "2. Add an SSH public key")
-  4) $(ui "3. Probar clave y cerrar root/contraseña" "3. Test key and close root/password")
-  5) $(ui "4. Activar UFW y repetir prueba de acceso" "4. Enable UFW and repeat access test")
-  6) $(ui "5. Activar Fail2ban" "5. Enable Fail2ban")
-  7) $(ui "6. Activar actualizaciones automáticas" "6. Enable automatic updates")
-  8) $(ui "7. Cambiar puerto SSH (opcional)" "7. Change SSH port (optional)")
-  9) $(ui "Ver resultado, pendientes y siguiente paso" "Show result, pending work and next step")
- 10) $(ui "Conservar cambios tras probar SSH y sudo" "Keep changes after testing SSH and sudo")
- 11) $(ui "Restaurar el último snapshot de acceso" "Restore the latest access snapshot")
- 12) $(ui "Auditar el estado sin tocar nada" "Audit the state without touching anything")
- 13) $(ui "Verificar el hardening aplicado y guardar reporte" "Verify applied hardening and save a report")
-  a) $(ui "Volver al menú principal" "Back to the main menu")
-  0) $(ui "Salir" "Exit")
+        if [[ $section == all ]]; then
+            UI_RENDER_WIDTH="$menu_width" ui_menu_text <<EOF
+1) $(ui 'Configurar el VPS con la guía completa' 'Configure the VPS with the complete guide')
+    1.1) $(ui 'Preparar cuenta administradora con sudo' 'Prepare an admin account with sudo')
+    1.2) $(ui 'Añadir una clave pública SSH' 'Add an SSH public key')
+    1.3) $(ui 'Revisar y aplicar actualizaciones pendientes' 'Review and apply pending updates')
+    1.4) $(ui 'Probar clave y cerrar root/contraseña' 'Test key and close root/password')
+    1.5) $(ui 'Activar UFW y repetir prueba de acceso' 'Enable UFW and repeat access test')
+    1.6) $(ui 'Activar Fail2ban' 'Enable Fail2ban')
+    1.7) $(ui 'Activar actualizaciones automáticas' 'Enable automatic updates')
+    1.8) $(ui 'Cambiar puerto SSH (opcional)' 'Change SSH port (optional)')
 EOF
-        echo
         fi
-        if ! ui_read "$(ui "Elige una opción: " "Choose an option: ")" option; then return 0; fi
+        if [[ $section == all || $section == review ]]; then
+            UI_RENDER_WIDTH="$menu_width" ui_menu_text <<EOF
+2) $(ui 'Revisar el VPS' 'Review the VPS')
+    2.1) $(ui 'Ver resultado y tareas pendientes' 'View results and pending tasks')
+    2.2) $(ui 'Revisar el estado sin cambiar nada' 'Review state without changing anything')
+    2.3) $(ui 'Verificar el hardening aplicado y guardar reporte' 'Verify applied hardening and save a report')
+EOF
+        fi
+        if [[ $section == all || $section == recovery ]]; then
+            UI_RENDER_WIDTH="$menu_width" ui_menu_text <<EOF
+3) $(ui 'Confirmar o recuperar cambios de acceso' 'Confirm or recover access changes')
+    3.1) $(ui 'Conservar cambios tras probar SSH y sudo' 'Keep changes after testing SSH and sudo')
+    3.2) $(ui 'Restaurar el último snapshot de acceso' 'Restore the latest access snapshot')
+EOF
+        fi
+        ui_text "4) $(ui 'Ayuda' 'Help')"
+        if [[ $section != all ]]; then ui_text "b) $(ui 'Volver al menú completo' 'Back to the complete menu')"; fi
+        ui_text "0) $(ui 'Salir' 'Exit')"
+        echo
+        ui_text "$(ui 'Escribe el número completo (ejemplo: 1.1 o 2.3) y pulsa Enter. El 1 inicia toda la guía; el 2 y el 3 muestran su grupo.' 'Type the complete number (example: 1.1 or 2.3) and press Enter. 1 starts the full guide; 2 and 3 show their group.')"
+        if ! ui_read "$(ui 'Escribe una opción: ' 'Type an option: ')" option; then return 0; fi
 
         case "$option" in
-            a|A) advanced=$((1-advanced)) ;;
-            h|H|\?) ui_help; pause ;;
+            2) section=review ;;
+            3) section=recovery ;;
+            b|B) section=all ;;
+            4|h|H|\?) ui_help; pause ;;
             1)
                 if ! fase_0_welcome; then continue; fi
                 if ! run_all_fases; then
@@ -4009,15 +4008,16 @@ EOF
                 offer_final_verification || true
                 pause
                 ;;
-            2) run_phase fase_1_user || true ;;
-            3) run_phase fase_2_ssh_key || true ;;
-            4) run_phase fase_3_harden_ssh || true ;;
-            5) run_phase fase_4_ufw || true ;;
-            6) run_phase fase_5_fail2ban || true ;;
-            7) run_phase fase_6_auto_updates || true ;;
-            8) run_phase fase_7_change_port || true ;;
-            9) final_summary; pause ;;
-            10)
+            1.1) run_phase fase_1_user || true ;;
+            1.2) run_phase fase_2_ssh_key || true ;;
+            1.3) run_phase fase_2b_updates || true ;;
+            1.4) run_phase fase_3_harden_ssh || true ;;
+            1.5) run_phase fase_4_ufw || true ;;
+            1.6) run_phase fase_5_fail2ban || true ;;
+            1.7) run_phase fase_6_auto_updates || true ;;
+            1.8) run_phase fase_7_change_port || true ;;
+            2.1) final_summary; pause ;;
+            3.1)
                 header "$(ui "Conservar cambios pendientes" "Keep pending changes")"
                 info "$(ui "Usa esta opción solo después de probar desde otra terminal que SSH con clave y sudo funcionan. Cancelarla convierte en permanentes los cambios protegidos." "Use this option only after testing from another terminal that key-based SSH and sudo work. Cancelling makes the protected changes permanent.")"
                 if confirm "$(ui "¿Ya hiciste esa prueba y quieres conservar los cambios?" "Have you done that test and want to keep the changes?")"; then
@@ -4027,9 +4027,9 @@ EOF
                 fi
                 pause
                 ;;
-            11) restore_last_snapshot; pause ;;
-            12) audit_report; pause ;;
-            13) verification_run || true; pause ;;
+            3.2) restore_last_snapshot; pause ;;
+            2.2) audit_report; pause ;;
+            2.3) verification_run || true; pause ;;
             0) echo "$(ui "Saliendo..." "Exiting...")"; exit 0 ;;
             *) warn "$(ui "Opción no válida." "Invalid option.")"; sleep 1 ;;
         esac

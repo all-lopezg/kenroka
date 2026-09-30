@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 17 · El rescate del menú: la opción 11 revierte al ÚLTIMO snapshot, o sea
+# 17 · El rescate del menú: la opción 3.2 revierte al ÚLTIMO snapshot, o sea
 # deshace el último cambio (el del puerto), no todo el endurecimiento. Es la
 # vía que la tarjeta final le indica a un novato, así que se prueba de verdad:
 # vía menú, con confirmación, y verificando que el 22 vuelve a funcionar.
@@ -19,8 +19,8 @@ expect_eq "SSH en 2222" "2222" "$(ssh_ports)"
 expect_match "UFW activo" "Status: active" "$(ufw_active)"
 expect_eq "sin cuenta atrás pendiente" "" "$(pending_rollbacks)"
 
-echo "  opción 11 del menú: revertir al último snapshot"
-out2="$(run_vps_in '11\ns\n0\n' --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
+echo "  opción 3.2 del menú: revertir al último snapshot"
+out2="$(run_vps_in '3.2\ns\n0\n' --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
 rc2=$?
 printf '%s\n' "$out2" | grep -E 'restaurado|Destino' | head -4 | sed 's/^/    > /'
 

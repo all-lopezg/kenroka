@@ -66,6 +66,16 @@ case "$1" in
         ui_panel 'SIMPLE'
         ;;
     menu) main_menu ;;
+    menu_actions)
+        run_phase() { printf 'RAN=%s\n' "$1"; }
+        pause() { :; }
+        final_summary() { printf 'RAN=summary\n'; }
+        audit_report() { printf 'RAN=audit\n'; }
+        verification_run() { printf 'RAN=verify\n'; }
+        cancel_all_rollbacks() { printf 'RAN=keep\n'; }
+        restore_last_snapshot() { printf 'RAN=restore\n'; }
+        main_menu
+        ;;
     username)
         USERNAME=''
         prompt_admin_username
@@ -136,9 +146,17 @@ hasnt 'TERM=dumb no usa escapes de pantalla' '[SCREEN]' "$OUT"
 run_ui menu 80
 has 'menú inicial conserva el arte original' '██╗' "$OUT"
 has 'menú ofrece tareas comprensibles' 'Revisar el estado sin cambiar nada' "$OUT"
-has 'acciones por fase están disponibles' 'ACCIONES AVANZADAS' "$OUT"
+has 'fases indentadas dentro de configuración' '1.8) Cambiar puerto SSH' "$OUT"
+has 'revisión usa subnúmeros del grupo 2' '2.3) Verificar' "$OUT"
+has 'recuperación usa subnúmeros del grupo 3' '3.2) Restaurar' "$OUT"
+has 'explica cómo escribir subnúmeros' 'número completo' "$OUT"
+hasnt 'no presenta numeración anterior con saltos' '13)' "$OUT"
 run_ui menu 42
 has 'pantalla estrecha conserva un arte compacto' '| K E N R O K A' "$OUT"
+run_ui menu_actions 80
+for action in fase_1_user fase_2_ssh_key fase_2b_updates fase_3_harden_ssh fase_4_ufw fase_5_fail2ban fase_6_auto_updates fase_7_change_port summary audit verify keep restore; do
+    has "subnúmero ejecuta la acción $action" "RAN=$action" "$OUT"
+done
 run_ui username 80
 has 'pide escribir el nombre y pulsar Enter' 'Escribe el nombre del usuario' "$OUT"
 has 'incluye ejemplo de nombre' 'ejemplo: miadmin' "$OUT"

@@ -83,8 +83,12 @@ En una terminal interactiva, Kenroka presenta pantallas con servidor,
 administrador, puerto y estado de la operación. El recorrido tiene **8 pasos**
 (incluye las actualizaciones que internamente se llaman fase 2.5).
 
-- El menú principal ofrece configuración guiada, resultados, auditoría y
-  verificación. `a` abre las acciones avanzadas por fase y permite volver.
+- El menú usa grupos consecutivos: `1` configuración, `2` revisión, `3`
+  recuperación y `4` ayuda. Las acciones aparecen indentadas con subnúmeros:
+  `1.1` administrador, `1.2` clave, hasta `1.8` puerto; `2.1` resultado,
+  `2.2` auditoría, `2.3` verificación; `3.1` conservar y `3.2` restaurar.
+  Escribe el número completo y pulsa Enter. `1` inicia toda la guía; `2` y `3`
+  muestran solo su grupo, `b` vuelve al menú completo y `0` sale.
 - Las confirmaciones aceptan `1`/`2` o las respuestas habituales `s`/`n`.
   `h` muestra ayuda en confirmaciones, pruebas de acceso y resultados.
 - Cada fase muestra su resultado y espera Enter antes de limpiar la vista.
