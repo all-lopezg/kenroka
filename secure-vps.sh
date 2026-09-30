@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.0
+# Versión: 1.4.1
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.0"
+readonly SCRIPT_VERSION="1.4.1"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -1278,8 +1278,10 @@ ufw_purge_port() {
 # El nombre en ASCII: adorno, pero es lo que hace que la pantalla parezca un
 # programa y no un script. Solo en la bienvenida y en el menú.
 banner() {
-    if ui_visual; then
-        ui_panel "KENROKA · secure-vps v$SCRIPT_VERSION"
+    if ui_visual && (( $(ui_width) < 60 )); then
+        printf '%s' "${BOLD}${CYAN}"
+        printf '%s\n' ' .-----------------.' ' | K E N R O K A   |' " '-----------------'"
+        printf '%s\n\n' "${NC}   secure-vps v$SCRIPT_VERSION"
         return 0
     fi
     printf '%s' "${BOLD}${CYAN}"
@@ -1478,17 +1480,27 @@ ensure_usable_sudo() {
     fi
 }
 
+prompt_admin_username() {
+    ui_text "$(ui 'Escribe el nombre del usuario que usarás para administrar el VPS y pulsa Enter. Por ejemplo: miadmin.' 'Type the username you will use to administer the VPS and press Enter. For example: myadmin.')"
+    ui_text "$(ui 'Si ya tienes una cuenta administradora, escribe su nombre. Si el usuario no existe, lo crearé. Aquí se pide un nombre, no una contraseña.' 'If you already have an administrator account, type its username. If the user does not exist, I will create it. This asks for a username, not a password.')"
+    while true; do
+        ui_read "$(ui 'Escribe el nombre de usuario (ejemplo: miadmin): ' 'Type the username (example: myadmin): ')" USERNAME || return 1
+        if valid_username "$USERNAME"; then return 0; fi
+        warn "$(ui 'El nombre es obligatorio: usa minúsculas, empieza con una letra y escribe hasta 31 caracteres. No uses root. Escribe el nombre y pulsa Enter.' 'A username is required: use lowercase, start with a letter and enter up to 31 characters. Do not use root. Type the username and press Enter.')"
+    done
+}
+
 fase_1_user() {
     clear_screen
     header "$(ui "FASE 1: Crear usuario con sudo utilizable" "PHASE 1: Create a usable sudo user")"
     phase_guide "1/7" \
         "Cuenta de administración" "Administration account" \
         "Crearé o revisaré un usuario no-root y comprobaré que puede usar sudo." "I will create or review a non-root user and check that it can use sudo." \
-        "Elige un nombre Linux para la cuenta que usarás cada día. La contraseña de sudo es local al VPS; no es la contraseña SSH." "Choose the Linux account you will use every day. The sudo password is local to the VPS; it is not the SSH password." \
+        "Escribe el nombre de la cuenta que usarás cada día y pulsa Enter (ejemplo: miadmin). Si ya tienes un administrador, escribe su nombre." "Type the username you will use every day and press Enter (example: myadmin). If you already have an administrator, type its username." \
         "Esta fase no cambia todavía las reglas de acceso SSH." "This phase does not change SSH access rules yet."
 
     if [[ -z "$USERNAME" ]]; then
-        ui_read "$(ui "Usuario administrador no-root (existente o nuevo): " "Non-root admin user (existing or new): ")" USERNAME || return 1
+        prompt_admin_username || return 1
     fi
     if ! valid_username "$USERNAME"; then
         error "$(ui "Nombre de usuario inválido para Linux: '$USERNAME'" "Invalid Linux username: '$USERNAME'")"

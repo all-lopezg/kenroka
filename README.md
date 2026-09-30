@@ -46,9 +46,10 @@ second terminal on **your computer** ready for the SSH access test. The provider
 console is a recovery path; it does not prove that a new SSH connection from the
 Internet works.
 
-The one-liner launches the guided assistant directly. If you prefer to choose
-individual phases, or to inspect the current state without making changes, download
-the script and run it without arguments — the menu provides all 13 actions:
+The usual command opens the initial menu with Kenroka ASCII art. From there you
+can choose the complete guide, review the current state or open advanced actions.
+Pass `--run-all` when running the script to enter the guide directly. You can also
+download the script and open the same menu without arguments:
 
 ```bash
 curl -fsSL -o secure-vps.sh \

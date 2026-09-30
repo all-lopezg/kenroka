@@ -4,13 +4,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 extract_fns ui info warn success error header pause confirm confirm_labels phase_label \
-    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner
+    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username
 {
     printf 'set -euo pipefail\n'
     declare -f ui_visual ui_width ui_rule ui_text ui_panel ui_menu_text ui_read ui_screen ui_command \
         ui_message ui_help ui_phase_finish run_phase clear_screen ui info warn success error header pause \
         confirm confirm_labels phase_label phase_guide guided_active ssh_test_command show_access_test_steps \
-        ask_access_result main_menu banner
+        ask_access_result main_menu banner prompt_admin_username valid_username
     cat <<'FIXTURE'
 UI_INPUT_TTY=1
 NON_INTERACTIVE=0 AUDIT_MODE=0 VERIFY_MODE=0 UI_PLAIN=0 GUIDED=1 ASSUME_YES=0
@@ -66,6 +66,11 @@ case "$1" in
         ui_panel 'SIMPLE'
         ;;
     menu) main_menu ;;
+    username)
+        USERNAME=''
+        prompt_admin_username
+        printf 'USERNAME_CHOSEN=%s\n' "$USERNAME"
+        ;;
     resize)
         ui_panel 'WIDE'
         stty cols 42
@@ -129,8 +134,16 @@ hasnt 'automatización no añade marcos' '+---' "$OUT"
 run_ui dumb 80
 hasnt 'TERM=dumb no usa escapes de pantalla' '[SCREEN]' "$OUT"
 run_ui menu 80
+has 'menú inicial conserva el arte original' '██╗' "$OUT"
 has 'menú ofrece tareas comprensibles' 'Revisar el estado sin cambiar nada' "$OUT"
 has 'acciones por fase están disponibles' 'ACCIONES AVANZADAS' "$OUT"
+run_ui menu 42
+has 'pantalla estrecha conserva un arte compacto' '| K E N R O K A' "$OUT"
+run_ui username 80
+has 'pide escribir el nombre y pulsar Enter' 'Escribe el nombre del usuario' "$OUT"
+has 'incluye ejemplo de nombre' 'ejemplo: miadmin' "$OUT"
+has 'Enter vacío no elige un usuario' 'El nombre es obligatorio' "$OUT"
+has 'rechaza root y permite corregir' 'USERNAME_CHOSEN=miadmin' "$OUT"
 # Facilita inspección manual de una ejecución real sin incluir artefactos en Git.
 if [[ -n ${KENROKA_UI_PREVIEW_DIR:-} ]]; then
     mkdir -p "$KENROKA_UI_PREVIEW_DIR"

@@ -156,7 +156,10 @@ STUB
     out="$(PATH="$D/bin:$PATH" SSH_CONNECTION='203.0.113.5 12345 203.0.113.9 22' run_inst)"; rc=$?
     has "solicita privilegios" 'SUDO_VALIDATION' "$out"
     has "explica la contraseña local" 'contraseña local' "$out"
-    has "lanza con sudo el asistente guiado" '<--run-all>' "$out"
+    has "lanza el script con sudo" 'SUDO_RUN:' "$out"
+    hasnt "sin argumentos conserva el menú inicial" '<--run-all>' "$out"
+    guided_out="$(PATH="$D/bin:$PATH" run_inst --run-all)"
+    has "permite entrar a la guía explícitamente" '<--run-all>' "$guided_out"
     has "conserva la sesión SSH" '<SSH_CONNECTION=203.0.113.5 12345 203.0.113.9 22>' "$out"
     has "conserva idioma" '<LANG=es_ES.UTF-8>' "$out"
     out="$(PATH="$D/bin:$PATH" TEST_SUDO_RUN_RC=7 run_inst --audit --lang en)"; rc=$?

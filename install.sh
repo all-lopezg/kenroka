@@ -137,12 +137,8 @@ fi
 say ""
 msg "Versión resuelta: ${RESOLVED}." "Resolved version: ${RESOLVED}."
 
-# Sin argumentos, quien llega por el one-liner va directo al asistente guiado.
-# El menú por fases sigue disponible corriendo el script a mano:
-#   sudo bash secure-vps.sh
-if [[ $# -eq 0 ]]; then
-    set -- --run-all
-fi
+# Sin argumentos se abre el menú inicial. --run-all sigue disponible para
+# quien quiera entrar directamente al recorrido guiado.
 
 say ""
 # La ayuda no requiere privilegios. El asistente sí, también cuando se repite

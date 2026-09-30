@@ -47,9 +47,10 @@ prepara una segunda terminal en **tu computadora** para la prueba de acceso SSH.
 consola del proveedor sirve para recuperar el VPS; no demuestra que una conexión SSH
 nueva desde Internet funcione.
 
-El one-liner lanza directo el asistente guiado. Si prefieres elegir fases sueltas, o
-ver el estado sin cambiar nada, descarga el script y corrélo sin argumentos: el menú
-ofrece las 13 acciones.
+El comando habitual abre el menú inicial con el arte ASCII de Kenroka. Desde él
+puedes elegir la guía completa, revisar el estado o abrir las acciones avanzadas.
+Para entrar directamente a la guía, añade `--run-all` al ejecutar el script.
+También puedes descargarlo y abrir el mismo menú sin argumentos:
 
 ```bash
 curl -fsSL -o secure-vps.sh \

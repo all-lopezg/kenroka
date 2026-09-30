@@ -22,6 +22,7 @@ responses = {
     'menu': ['a', '0'],
     'decision': ['h', '1', ''],
     'resize': [''],
+    'username': ['', 'root', 'miadmin'],
 }[scenario]
 pid, fd = pty.fork()
 if pid == 0:
