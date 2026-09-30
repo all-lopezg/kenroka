@@ -81,4 +81,67 @@ check 'no marca una clave no probada' 0 "$KEY_TESTED"
 has 'declara que el cierre aún no ocurre' 'todavía no cerraré root ni el acceso con contraseña' "$out"
 has 'da el siguiente resultado comprensible' 'No cerraré root ni la contraseña' "$out"
 
+echo '== sugerencia de puerto disponible'
+extract_fns suggest_ssh_port
+CURRENT_PORT=22
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:22'; }
+check 'sugiere un puerto diferente de 2222' 24022 "$(suggest_ssh_port)"
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:24022' 'UNCONN 0 0 [::]:24023'; }
+check 'evita TCP y UDP ocupados' 24024 "$(suggest_ssh_port)"
+CURRENT_PORT=24024
+check 'evita también el puerto actual' 24025 "$(suggest_ssh_port)"
+ss() { return 1; }
+suggest_ssh_port > /dev/null; rc=$?
+check 'no sugiere si no puede leer escuchas' 1 "$rc"
+CURRENT_PORT=22
+ss() { local p; for ((p=24022; p<24122; p++)); do printf 'LISTEN 0 128 0.0.0.0:%s\n' "$p"; done; }
+suggest_ssh_port > /dev/null; rc=$?
+check 'rango agotado no propone un puerto ocupado' 1 "$rc"
+
+echo '== corrección de entradas en la fase de puerto'
+extract_fns fase_7_change_port port_in_use_by_other is_port
+header() { :; }
+detect_ssh_activation() { :; }
+ssh_activation_summary() { :; }
+current_ssh_port() { printf '22'; }
+confirm() { return 0; }
+snapshot_state() { printf 'SNAPSHOT_REQUESTED\n'; return 1; }
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:24022'; }
+NON_INTERACTIVE=0 ASSUME_YES=0 ON_CONSOLE=0 ALLOW_LOCKDOWN=0 NEW_PORT=''
+out="$(printf 'texto\n24022\n24024\n' | fase_7_change_port)"; rc=$?
+has 'permite corregir un número inválido' 'Escribe un número entre 1 y 65535' "$out"
+has 'permite corregir un puerto ocupado' 'El puerto 24022 está ocupado' "$out"
+has 'recuerda el cortafuegos del proveedor' 'cortafuegos externo' "$out"
+has 'solo llega a preparar cambios tras una entrada válida' 'SNAPSHOT_REQUESTED' "$out"
+# El stub de snapshot falla intencionadamente: nunca se cambia SSH aquí.
+check 'la prueba se detiene antes de modificar SSH' 1 "$rc"
+NEW_PORT=''
+out="$(fase_7_change_port < /dev/null)"; rc=$?
+check 'EOF conserva el puerto sin error' 0 "$rc"
+hasnt 'EOF no prepara cambios' 'SNAPSHOT_REQUESTED' "$out"
+
+echo '== limpieza de pantalla'
+NON_INTERACTIVE=0
+check 'sin terminal no escribe escapes' '' "$(clear_screen)"
+# PTY real para comprobar lo que ve el usuario, sin modificar el servidor.
+declare -f ui_visual clear_screen > "$WORK/clear-screen.sh"
+python3 - "$WORK/clear-screen.sh" <<'PTY' > "$WORK/clear-output"
+import os, pty, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('bash', ['bash', '-c', 'source "$1"; TERM=xterm; NON_INTERACTIVE=0; clear_screen; NON_INTERACTIVE=1; clear_screen', '_', sys.argv[1]])
+out = b''
+while True:
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    out += data
+os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+PTY
+check 'limpia y mueve cursor solo en modo interactivo' $'\033[2J\033[H' "$(cat "$WORK/clear-output")"
+
 summary

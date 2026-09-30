@@ -145,6 +145,27 @@ if [[ $# -eq 0 ]]; then
 fi
 
 say ""
-bash "${WORK}/secure-vps.sh" "$@" < /dev/tty
-rc=$?
-exit $rc
+# La ayuda no requiere privilegios. El asistente sí, también cuando se repite
+# desde el administrador no-root creado en la primera ejecución.
+NEEDS_ROOT=1
+for arg in "$@"; do
+    [[ "$arg" == --help ]] && NEEDS_ROOT=0
+done
+RUNNER=(bash)
+if [[ $EUID -ne 0 && $NEEDS_ROOT -eq 1 ]]; then
+    command -v sudo >/dev/null 2>&1 || msg_fail \
+        "falta sudo: entra con una cuenta administradora y vuelve a ejecutar el instalador." \
+        "sudo is missing: log in with an administrator account and rerun the installer."
+    msg "Se necesitan permisos de administrador. sudo puede pedir la contraseña local de tu usuario; al escribirla no se muestran caracteres." \
+        "Administrator privileges are needed. sudo may ask for your user's local password; typed characters are not displayed."
+    if ! sudo -v < /dev/tty; then
+        msg_fail "No pude obtener permisos con sudo. Comprueba que tu cuenta puede usar sudo y vuelve a ejecutar el mismo comando." \
+                 "Could not obtain sudo privileges. Check that your account can use sudo and rerun the same command."
+    fi
+    # Conservamos solo el contexto de idioma y SSH, no todo el entorno del usuario.
+    RUNNER=(sudo env "LANG=${LANG:-C}" "LC_MESSAGES=${LC_MESSAGES:-${LANG:-C}}"
+        "LC_ALL=${LC_ALL:-}" "SSH_CONNECTION=${SSH_CONNECTION:-}" "SSH_CLIENT=${SSH_CLIENT:-}" bash)
+fi
+rc=0
+"${RUNNER[@]}" "${WORK}/secure-vps.sh" "$@" < /dev/tty || rc=$?
+exit "$rc"

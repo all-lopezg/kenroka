@@ -667,11 +667,11 @@ CURRENT_PORT=22
 AUDIT_SUGGEST_USER="ana"
 out="$(audit_findings 2>&1)"
 has "numera los hallazgos" "2) segundo" "$out"
-has "sugiere el comando con puerto" "--port 2222 --user ana" "$out"
+has "sugiere el comando con puerto" "--port 24022 --user ana" "$out"
 has "y recuerda que no escribio" "--audit solo lee" "$out"
 CURRENT_PORT=2222
 out="$(audit_findings 2>&1)"
-hasnt "fuera del 22 no propone --port" "--port 2222" "$out"
+hasnt "fuera del 22 no propone --port" "--port 24022" "$out"
 out="$(LANG=C UI_LANG=en audit_findings 2>&1)"
 has "en ingles el cierre dice Findings" "Findings" "$out"
 hasnt "y no queda espanol" "Hallazgos" "$out"

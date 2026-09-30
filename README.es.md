@@ -25,7 +25,16 @@ curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh 
 
 La URL no lleva versión a propósito: siempre resuelve la última release publicada.
 El instalador verifica la firma de la release y te dice qué versión bajó antes de
-ejecutar nada.
+ejecutar nada. Si entras con un administrador sin privilegios de root, solicita
+`sudo` automáticamente. Puede pedir la contraseña local de ese usuario (no la
+frase de tu clave SSH); al escribirla no se ven caracteres. Para repetirlo, usa
+el mismo comando desde tu cuenta administradora.
+
+Entre fases, la vista se limpia después de que hayas leído el resultado y
+continuado. El historial de la terminal y `/var/log/secure-vps.log` siguen disponibles.
+Al cambiar el puerto se sugiere **24022**, o el siguiente disponible hasta 24121,
+comprobando escuchas TCP y UDP. Abre también ese puerto TCP en el cortafuegos de
+tu proveedor si lo tiene. Cambiarlo es opcional y no sustituye una clave SSH.
 
 Para fijar una versión concreta:
 
@@ -65,6 +74,32 @@ escribe ningún archivo y no hace ninguna petición saliente.
 ```bash
 sudo bash secure-vps.sh --audit > auditoria.txt
 ```
+
+
+### Interfaz de terminal
+
+En una terminal interactiva, Kenroka presenta pantallas con servidor,
+administrador, puerto y estado de la operación. El recorrido tiene **8 pasos**
+(incluye las actualizaciones que internamente se llaman fase 2.5).
+
+- El menú principal ofrece configuración guiada, resultados, auditoría y
+  verificación. `a` abre las acciones avanzadas por fase y permite volver.
+- Las confirmaciones aceptan `1`/`2` o las respuestas habituales `s`/`n`.
+  `h` muestra ayuda en confirmaciones, pruebas de acceso y resultados.
+- Cada fase muestra su resultado y espera Enter antes de limpiar la vista.
+  “Confirmado para esta fase” no certifica el VPS completo. Las tareas parciales,
+  la prueba pendiente, los cambios omitidos y las restauraciones se distinguen.
+- En una prueba SSH, Enter y pedir ayuda **no confirman ni restauran**. El
+  temporizador de protección continúa corriendo mientras decides.
+- El ancho se recalcula al dibujar. En terminales de menos de 60 columnas se
+  eliminan los marcos; los comandos largos usan `\` para poder copiarlos completos.
+- `--audit`, `--verify`, `--non-interactive`, la salida redirigida y `TERM=dumb`
+  conservan una presentación de texto sin pantallas ni marcos. `--experto`
+  mantiene las explicaciones breves en la interfaz interactiva.
+
+No hace falta instalar una biblioteca TUI. La presentación usa Bash y las
+herramientas del sistema Ubuntu. Las operaciones siguen en el registro
+`/var/log/secure-vps.log`; la verificación final guarda su propio reporte.
 
 ## Flujo guiado
 
@@ -108,7 +143,7 @@ puedes abrirla desde la opción **13** del menú o ejecutarla después:
 ```bash
 sudo bash secure-vps.sh --verify --user miadmin
 # Opcional: exigir el puerto y la política sudo elegidos.
-sudo bash secure-vps.sh --verify --user miadmin --port 2222 --sudo prompt
+sudo bash secure-vps.sh --verify --user miadmin --port 24022 --sudo prompt
 ```
 
 Comprueba el administrador, la clave y sus permisos, la política sudo efectiva,

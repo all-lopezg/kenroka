@@ -25,7 +25,15 @@ curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh 
 
 The URL is intentionally unversioned: it always resolves to the latest published
 release. The installer verifies the release signature and tells you which version it
-resolved before running anything.
+resolved before running anything. When signed in as a non-root administrator, it requests
+`sudo` automatically. It may ask for that user's local password (not the SSH key
+passphrase); typed characters are hidden. Use the same command to run it again.
+
+The screen clears between phases after you have read the result and continued.
+Terminal history and `/var/log/secure-vps.log` remain available. The optional SSH
+port change suggests **24022**, or the next available port up to 24121, checking
+TCP and UDP listeners. Also allow the new TCP port in your provider's firewall
+if it has one. A different port does not replace an SSH key.
 
 To pin a specific version:
 
@@ -65,6 +73,32 @@ file and makes no outbound request.
 ```bash
 sudo bash secure-vps.sh --audit > audit.txt
 ```
+
+
+### Terminal interface
+
+In an interactive terminal, Kenroka displays screens with the server,
+administrator, port and operation state. The guided flow has **8 steps**
+(including updates, internally called phase 2.5).
+
+- The main menu offers guided setup, results, auditing and verification. `a`
+  opens advanced actions by phase and returns to the main menu.
+- Confirmations accept `1`/`2` or the usual `y`/`n` answers. `h` shows help
+  during confirmations, access tests and phase results.
+- Every phase shows its result and waits for Enter before clearing the screen.
+  “Confirmed for this phase” does not certify the entire VPS. Partial work,
+  pending access tests, skipped changes and restorations have distinct states.
+- During an SSH test, Enter and help **neither confirm nor restore**. The
+  protection timer keeps running while you decide.
+- Width is recalculated when drawing. Below 60 columns the frames disappear;
+  long commands use `\` continuations so the complete command stays copyable.
+- `--audit`, `--verify`, `--non-interactive`, redirected output and `TERM=dumb`
+  retain text output without screens or frames. `--experto` keeps explanations
+  short in the interactive interface.
+
+No TUI library installation is needed. Presentation uses Bash and Ubuntu's
+system tools. Operations remain in `/var/log/secure-vps.log`; final verification
+saves its own report.
 
 ## Guided flow
 
@@ -107,7 +141,7 @@ also select menu option **13** or run it later:
 ```bash
 sudo bash secure-vps.sh --verify --user myadmin
 # Optional: require the chosen port and sudo policy.
-sudo bash secure-vps.sh --verify --user myadmin --port 2222 --sudo prompt
+sudo bash secure-vps.sh --verify --user myadmin --port 24022 --sudo prompt
 ```
 
 It checks the administrator, key and permissions, effective sudo policy, SSH and

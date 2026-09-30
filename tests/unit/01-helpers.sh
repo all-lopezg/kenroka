@@ -127,7 +127,7 @@ echo "== colores y banner"
 bad_quotes="$(grep -cE "readonly (RED|GREEN|YELLOW|BLUE|CYAN|BOLD|DIM|NC)='\\\\033" "$SRC" || true)"
 check "ningun color definido con comilla simple" "0" "$bad_quotes"
 for v in RED GREEN YELLOW BLUE CYAN BOLD DIM NC; do
-    n="$(grep -oE "\b${v}=" "$SRC" | grep -c . || true)"
+    n="$(sed -n '/^if \[\[ -t 1 \]\]; then/,/^fi$/p' "$SRC" | grep -oE "\b${v}=" | grep -c . || true)"
     check "$v definido en las dos ramas (con y sin TTY)" "2" "$n"
 done
 # El arte se mide en codepoints, no en bytes: cada caja son 3 bytes y awk del

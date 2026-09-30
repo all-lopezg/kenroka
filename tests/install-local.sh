@@ -136,5 +136,39 @@ has "usa la ruta de la versión solicitada" "/releases/download/$PINNED_TAG" "$o
 has "verifica la release fijada" 'Signature valid' "$out"
 has "ejecuta la versión fijada" "Resolved version: $RELEASE_VERSION." "$out"
 
+# Nunca elevamos permisos reales en este arnés: sudo simulado comprueba el
+# contrato del launcher después de verificar firma y checksum.
+if [[ $EUID -ne 0 ]]; then
+    echo "== segunda ejecución desde administrador no-root"
+    mkdir -p "$D/bin"
+    cat > "$D/bin/sudo" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == -v ]]; then
+    printf 'SUDO_VALIDATION\n'
+    exit "${TEST_SUDO_VALIDATION_RC:-0}"
+fi
+printf 'SUDO_RUN:'
+printf ' <%s>' "$@"
+printf '\n'
+exit "${TEST_SUDO_RUN_RC:-0}"
+STUB
+    chmod +x "$D/bin/sudo"
+    out="$(PATH="$D/bin:$PATH" SSH_CONNECTION='203.0.113.5 12345 203.0.113.9 22' run_inst)"; rc=$?
+    has "solicita privilegios" 'SUDO_VALIDATION' "$out"
+    has "explica la contraseña local" 'contraseña local' "$out"
+    has "lanza con sudo el asistente guiado" '<--run-all>' "$out"
+    has "conserva la sesión SSH" '<SSH_CONNECTION=203.0.113.5 12345 203.0.113.9 22>' "$out"
+    has "conserva idioma" '<LANG=es_ES.UTF-8>' "$out"
+    out="$(PATH="$D/bin:$PATH" TEST_SUDO_RUN_RC=7 run_inst --audit --lang en)"; rc=$?
+    [[ $rc -eq 7 ]] && ok 'conserva el código de salida del asistente' || bad "código inesperado: $rc"
+    has "reenvía flags" '<--audit> <--lang> <en>' "$out"
+    out="$(PATH="$D/bin:$PATH" TEST_SUDO_VALIDATION_RC=1 run_inst)"; rc=$?
+    [[ $rc -ne 0 ]] && ok 'sudo rechazado devuelve fallo' || bad 'sudo rechazado devolvió éxito'
+    has "sudo rechazado explica cómo continuar" 'vuelve a ejecutar el mismo comando' "$out"
+    hasnt "sudo rechazado no ejecuta el asistente" 'SUDO_RUN:' "$out"
+    out="$(PATH="$D/bin:$PATH" run_inst --help)"
+    hasnt "la ayuda no pide sudo" 'SUDO_VALIDATION' "$out"
+fi
+
 printf '\n  resultado: %d ok, %d fallas\n' "$PASS" "$FAILN"
 [[ $FAILN -eq 0 ]]

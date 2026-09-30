@@ -212,7 +212,7 @@ pty_fixture="$WORK/pty-fixture.sh"
 {
     echo 'set -uo pipefail'
     declare -p WORK
-    declare -f ui valid_username world_or_group_writable audit_eff_val audit_eff_rest audit_session_ip \
+    declare -f ui ui_visual ui_width ui_text ui_read valid_username world_or_group_writable audit_eff_val audit_eff_rest audit_session_ip \
         verification_item verification_expect verification_port_contains verification_key_ok verification_ssh \
         verification_user verification_firewall verification_fail2ban verification_updates verification_rollbacks \
         verification_collect verification_result ssh_test_command show_access_test_steps ask_access_result \

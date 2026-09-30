@@ -25,7 +25,7 @@ fi
 extract_fns() {
     local fn
     : > "$WORK/extracted.sh"
-    for fn in "$@"; do
+    for fn in ui_visual ui_width ui_rule ui_text ui_panel ui_menu_text ui_read ui_screen ui_command ui_message ui_help ui_phase_finish run_phase clear_screen "$@"; do
         awk -v fn="$fn" '
             !inside && $0 ~ "^"fn"\\(\\)" { inside=1; print; if ($0 ~ /\}[[:space:]]*$/) inside=0; next }
             inside { print; if (/^}/) inside=0 }
