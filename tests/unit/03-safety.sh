@@ -185,4 +185,13 @@ silence install_sudoers_prompt tester; rc=$?
 check "rechaza sudoers inválido" 1 "$rc"
 has "validación fallida preserva la regla previa" NOPASSWD "$(cat "$WORK/sudoers/90-tester")"
 
+echo '== snapshot conserva el arranque automático de Fail2ban'
+ROLLBACK_ARMED=0 PENDING_TIMER=''
+systemctl() { [[ $1 == is-enabled ]] && { printf 'disabled\n'; return 1; }; return 1; }
+snapshot_state >/dev/null || exit 1
+check 'captura disabled aunque systemctl devuelva 1' disabled "$(cat "$SNAP_DIR/FAIL2BAN_BOOT")"
+systemctl() { [[ $1 == is-enabled ]] && { printf 'enabled\n'; return 0; }; return 1; }
+snapshot_state >/dev/null || exit 1
+check 'captura enabled para restauración' enabled "$(cat "$SNAP_DIR/FAIL2BAN_BOOT")"
+
 summary

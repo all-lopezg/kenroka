@@ -676,4 +676,24 @@ out="$(LANG=C UI_LANG=en audit_findings 2>&1)"
 has "en ingles el cierre dice Findings" "Findings" "$out"
 hasnt "y no queda espanol" "Hallazgos" "$out"
 
+echo '== habilitación explícita de Fail2ban al arrancar'
+extract_fns ui fail2ban_enable_boot
+BOOT_STATE=disabled ENABLE_FAIL=0
+systemctl() {
+    case "$1" in
+        enable) [[ $ENABLE_FAIL -eq 0 ]] || return 1; BOOT_STATE=enabled ;;
+        is-enabled) printf '%s\n' "$BOOT_STATE"; [[ $BOOT_STATE == enabled ]] ;;
+    esac
+}
+fail2ban_enable_boot; rc=$?
+check 'servicio deshabilitado queda habilitado' enabled "$BOOT_STATE"
+check 'habilitación confirmada completa el paso' 0 "$rc"
+ENABLE_FAIL=1
+silence fail2ban_enable_boot; rc=$?
+check 'no oculta fallo al habilitar' 1 "$rc"
+ENABLE_FAIL=0
+systemctl() { [[ $1 != is-enabled ]] || printf 'disabled\n'; }
+silence fail2ban_enable_boot; rc=$?
+check 'no declara éxito si sigue deshabilitado' 1 "$rc"
+
 summary

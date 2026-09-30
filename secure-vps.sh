@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.8
+# Versión: 1.4.9
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.8"
+readonly SCRIPT_VERSION="1.4.9"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -1017,6 +1017,10 @@ snapshot_state() {
     if systemctl is-active --quiet fail2ban; then
         touch "$SNAP_DIR/FAIL2BAN_ACTIVE" || return 1
     fi
+    status=$(systemctl is-enabled fail2ban 2>/dev/null) || true
+    case "$status" in
+        enabled|disabled) printf '%s\n' "$status" > "$SNAP_DIR/FAIL2BAN_BOOT" || return 1 ;;
+    esac
     if [[ $SOCKET_ACTIVATED -eq 1 ]]; then
         touch "$SNAP_DIR/SSH_SOCKET" || return 1
     fi
@@ -1063,6 +1067,13 @@ if command -v ufw >/dev/null; then
     fi
 fi
 if command -v fail2ban-client >/dev/null; then
+    # Los snapshots antiguos no tienen este dato: conservar su comportamiento.
+    if [[ -f "$SNAP/FAIL2BAN_BOOT" ]]; then
+        case "$(<"$SNAP/FAIL2BAN_BOOT")" in
+            enabled) systemctl enable fail2ban ;;
+            disabled) systemctl disable fail2ban ;;
+        esac
+    fi
     if [[ -f "$SNAP/FAIL2BAN_ACTIVE" ]]; then
         systemctl restart fail2ban
     else
@@ -2555,6 +2566,20 @@ detect_admin_ips() {
     fi
 }
 
+fail2ban_enable_boot() {
+    local state
+    if ! systemctl enable fail2ban; then
+        error "$(ui 'No pude habilitar Fail2ban al arrancar. Revisa: systemctl status fail2ban' 'Could not enable Fail2ban at boot. Check: systemctl status fail2ban')"
+        return 1
+    fi
+    state=$(systemctl is-enabled fail2ban 2>/dev/null) || true
+    if [[ "$state" != enabled ]]; then
+        error "$(ui "Fail2ban no quedó habilitado al arrancar (estado: ${state:-desconocido})." "Fail2ban was not enabled at boot (state: ${state:-unknown}).")"
+        return 1
+    fi
+    return 0
+}
+
 fase_5_fail2ban() {
     clear_screen
     header "$(ui "FASE 5: Instalar Fail2ban" "PHASE 5: Install Fail2ban")"
@@ -2594,8 +2619,12 @@ fase_5_fail2ban() {
         revert_now "$(ui "Restauro la configuración anterior de Fail2ban." "Restoring the previous Fail2ban configuration.")"
         return 1
     fi
+    if ! fail2ban_enable_boot; then
+        revert_now "$(ui 'No quedó asegurado el arranque automático de Fail2ban; restauro el estado anterior.' 'Fail2ban automatic startup was not confirmed; restoring the previous state.')"
+        return 1
+    fi
     fail2ban-client status sshd 2>/dev/null | sed 's/^/    /' || true
-    success "$(ui "Fail2ban activo con el jail sshd." "Fail2ban active with the sshd jail.")"
+    success "$(ui "Fail2ban activo con el jail sshd y habilitado al arrancar." "Fail2ban active with the sshd jail and enabled at boot.")"
     info "$(ui "Resultado: 3 fallos en 10 minutos bloquean 24 h. La exclusión configurada es: ${ADMIN_IPS:-ninguna}." "Result: 3 failures in 10 minutes block for 24 h. The configured exclusion is: ${ADMIN_IPS:-none}.")"
 
     log "Fase 5 completada (backend=$FAIL2BAN_BACKEND port=$CURRENT_PORT ignore='$ADMIN_IPS')."
