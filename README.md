@@ -194,6 +194,16 @@ the server's overall security.
 - Offers to move SSH away from port 22.
 - Verifies the effective SSH configuration before applying the final lockdown.
 
+
+### Connect using a short name
+
+The final summary and menu option **2.4** explain how to add a `mi-vps` alias
+to your computer's SSH configuration. Instructions cover macOS/Linux and
+Windows/PowerShell and include the current user, effective port and `ssh mi-vps`
+command. Preserve existing `config` entries; the assistant only displays
+instructions and does not modify local or VPS files for the alias.
+
+
 ## The safety net
 
 The most important rule is simple:

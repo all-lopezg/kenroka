@@ -4,13 +4,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 extract_fns ui info warn success error header pause confirm confirm_labels phase_label \
-    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight
+    phase_guide guided_active ssh_test_command show_access_test_steps ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight ssh_alias_help
 {
     printf 'set -euo pipefail\n'
     declare -f ui_visual ui_width ui_rule ui_text ui_panel ui_menu_text ui_read ui_screen ui_command \
         ui_message ui_help ui_phase_finish run_phase clear_screen ui info warn success error header pause \
         confirm confirm_labels phase_label phase_guide guided_active ssh_test_command show_access_test_steps \
-        ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight
+        ask_access_result main_menu banner prompt_admin_username valid_username key_howto_text confirm_key_preflight ssh_alias_help
     cat <<'FIXTURE'
 UI_INPUT_TTY=1
 NON_INTERACTIVE=0 AUDIT_MODE=0 VERIFY_MODE=0 UI_PLAIN=0 GUIDED=1 ASSUME_YES=0
@@ -76,6 +76,7 @@ case "$1" in
         run_phase() { printf 'RAN=%s\n' "$1"; }
         pause() { :; }
         final_summary() { printf 'RAN=summary\n'; }
+        ssh_alias_help() { printf 'RAN=alias\n'; }
         audit_report() { printf 'RAN=audit\n'; }
         verification_run() { printf 'RAN=verify\n'; }
         cancel_all_rollbacks() { printf 'RAN=keep\n'; }
@@ -88,6 +89,11 @@ case "$1" in
         if [[ $1 == keys_windows ]]; then CLIENT_OS=windows; UI_LANG=en; fi
         if [[ $1 == keys_plain ]]; then NON_INTERACTIVE=1; fi
         key_howto_text
+        ;;
+    alias|alias_en)
+        current_ssh_port() { printf '24123'; }
+        if [[ $1 == alias_en ]]; then UI_LANG=en; fi
+        ssh_alias_help
         ;;
     username)
         USERNAME=''
@@ -124,6 +130,17 @@ has 'SSH destacado con color y negrita' $'\033[1m\033[0;32m  ssh -o' "$(cat "$WO
 has 'SSH en una sola línea lógica' "  $(ssh_test_command 24022)" "$OUT"
 run_ui restore 80
 has 'opción 2 restaura' 'ACCESS_RESULT=1' "$OUT"
+
+echo '== alias local usa el puerto efectivo'
+run_ui alias 80
+has 'configuración de alias conserva dirección' '    HostName 203.0.113.9' "$OUT"
+has 'configuración de alias conserva usuario' '    User admin' "$OUT"
+has 'alias usa puerto efectivo y no el anterior' '    Port 24123' "$OUT"
+has 'bloque se pega en archivo y no se ejecuta' 'NO EJECUTAR EN LA TERMINAL' "$OUT"
+has 'acceso corto disponible' '  ssh mi-vps' "$OUT"
+run_ui alias_en 80
+has 'alias disponible en inglés' 'EASY ACCESS: ssh mi-vps' "$OUT"
+has 'Windows tiene instrucciones locales' 'notepad "$HOME\.ssh\config"' "$OUT"
 
 echo '== comandos destacados y copiables'
 run_ui keys 80
@@ -188,7 +205,7 @@ hasnt 'no presenta numeración anterior con saltos' '13)' "$OUT"
 run_ui menu 42
 has 'pantalla estrecha conserva un arte compacto' '| K E N R O K A' "$OUT"
 run_ui menu_actions 80
-for action in fase_1_user fase_2_ssh_key fase_2b_updates fase_3_harden_ssh fase_4_ufw fase_5_fail2ban fase_6_auto_updates fase_7_change_port summary audit verify keep restore; do
+for action in fase_1_user fase_2_ssh_key fase_2b_updates fase_3_harden_ssh fase_4_ufw fase_5_fail2ban fase_6_auto_updates fase_7_change_port summary audit verify alias keep restore; do
     has "subnúmero ejecuta la acción $action" "RAN=$action" "$OUT"
 done
 run_ui username 80

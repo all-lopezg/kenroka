@@ -197,6 +197,16 @@ todos los posibles clientes ni la seguridad completa del servidor.
 - Ofrece sacar SSH del puerto 22.
 - Verifica la configuración efectiva de SSH antes del cierre definitivo.
 
+
+### Entrar con un nombre corto
+
+El resumen final y la opción **2.4** del menú explican cómo añadir un alias
+`mi-vps` a la configuración SSH de tu computadora. Incluyen instrucciones para
+macOS/Linux y Windows/PowerShell, el usuario y puerto efectivos, y el comando
+`ssh mi-vps`. Conserva las entradas existentes del archivo `config`; el asistente
+solo muestra instrucciones y no modifica archivos locales ni del VPS.
+
+
 ## La red de seguridad
 
 La regla importante es simple:

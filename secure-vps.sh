@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.6
+# Versión: 1.4.7
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.6"
+readonly SCRIPT_VERSION="1.4.7"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -2863,6 +2863,30 @@ finalize_old_port_removal() {
 # ============================================================
 # RESUMEN FINAL
 # ============================================================
+# Instrucciones locales: nunca escribe la configuración SSH del VPS.
+ssh_alias_help() {
+    local port="${1:-$(current_ssh_port)}"
+    ui_panel "$(ui 'ACCESO FÁCIL: ssh mi-vps' 'EASY ACCESS: ssh mi-vps')"
+    if [[ -z "${USERNAME:-}" || -z "${PUBLIC_IP:-}" ]]; then
+        ui_text "$(ui 'Primero prepara la cuenta administradora (1.1) y comprueba la dirección del VPS. Después vuelve a esta opción.' 'First prepare the admin account (1.1) and check the VPS address. Then return to this option.')"
+        return 0
+    fi
+    ui_text "$(ui 'Haz estos pasos en TU computadora, en otra terminal. El alias guarda usuario, dirección y puerto; sigue usando tu clave SSH.' 'Follow these steps on YOUR computer, in another terminal. The alias stores your user, address and port; it still uses your SSH key.')"
+    ui_text "$(ui '1. Abre el archivo de configuración local. Elige el comando de tu sistema:' '1. Open your local configuration file. Choose the command for your system:')"
+    ui_command 'mkdir -p ~/.ssh && nano ~/.ssh/config' 'macOS / Linux'
+    ui_command 'New-Item -ItemType Directory -Force "$HOME\.ssh" | Out-Null; notepad "$HOME\.ssh\config"' 'Windows / PowerShell'
+    ui_text "$(ui '2. Añade este bloque AL PRINCIPIO del archivo, antes de otros bloques Host. Conserva lo que ya existe. Si ya usas mi-vps, elige otro nombre y úsalo también al conectar.' '2. Add this block AT THE START of the file, before other Host blocks. Preserve existing content. If you already use mi-vps, choose another name and use it when connecting too.')"
+    ui_panel "$(ui 'COPIAR AL ARCHIVO config · NO EJECUTAR EN LA TERMINAL' 'COPY INTO THE config FILE · DO NOT RUN IN THE TERMINAL')"
+    printf '%sHost mi-vps\n    HostName %s\n    User %s\n    Port %s\n%s' "${BOLD:-}${GREEN:-}" "$PUBLIC_IP" "$USERNAME" "$port" "${NC:-}"
+    ui_text "$(ui '3. Guarda el archivo. En nano: Ctrl+O, Enter y Ctrl+X. En Bloc de notas: Ctrl+S; el archivo debe llamarse config, sin .txt.' '3. Save the file. In nano: Ctrl+O, Enter, then Ctrl+X. In Notepad: Ctrl+S; the file must be named config, without .txt.')"
+    ui_text "$(ui 'En macOS/Linux, ajusta los permisos del archivo después de guardarlo:' 'On macOS/Linux, set the file permissions after saving:')"
+    ui_command 'chmod 600 ~/.ssh/config' 'macOS / Linux'
+    ui_text "$(ui 'Si tu clave privada está en otra ruta, añade una línea IdentityFile con esa ruta dentro del bloque. La clave permanece en tu computadora.' 'If your private key is in another location, add an IdentityFile line with that path inside the block. The key stays on your computer.')"
+    ui_text "$(ui '4. Para entrar desde ahora, ejecuta en TU computadora:' '4. To connect from now on, run on YOUR computer:')"
+    ui_command 'ssh mi-vps' "$(ui 'EN TU COMPUTADORA · ACCESO AL VPS' 'ON YOUR COMPUTER · VPS ACCESS')"
+    ui_text "$(ui 'Mantén la sesión actual abierta hasta comprobar este acceso. Si cambias el puerto o la dirección del VPS, actualiza el bloque. Estas instrucciones también están en la opción 2.4 del menú.' 'Keep the current session open until you have checked this connection. If the VPS port or address changes, update the block. These instructions are also available in menu option 2.4.')"
+}
+
 final_summary() {
     local UI_PLAIN=1
     header "$(ui "RESUMEN DEL ESTADO" "STATE SUMMARY")"
@@ -2973,6 +2997,7 @@ EOF
     else
         warn "$(ui "Resultado: quedan tareas pendientes; no se presenta como hardening exitoso." "Result: tasks remain; this is not presented as successful hardening.")"
     fi
+    ssh_alias_help "$port"
 }
 
 # ============================================================
@@ -3991,6 +4016,7 @@ EOF
     2.1) $(ui 'Ver resultado y tareas pendientes' 'View results and pending tasks')
     2.2) $(ui 'Revisar el estado sin cambiar nada' 'Review state without changing anything')
     2.3) $(ui 'Verificar el hardening aplicado y guardar reporte' 'Verify applied hardening and save a report')
+    2.4) $(ui 'Configurar alias SSH en tu computadora' 'Set up an SSH alias on your computer')
 EOF
         fi
         if [[ $section == all || $section == recovery ]]; then
@@ -4033,6 +4059,7 @@ EOF
             1.7) run_phase fase_6_auto_updates || true ;;
             1.8) run_phase fase_7_change_port || true ;;
             2.1) final_summary; pause ;;
+            2.4) clear_screen; ssh_alias_help; pause ;;
             3.1)
                 header "$(ui "Conservar cambios pendientes" "Keep pending changes")"
                 info "$(ui "Usa esta opción solo después de probar desde otra terminal que SSH con clave y sudo funcionan. Cancelarla convierte en permanentes los cambios protegidos." "Use this option only after testing from another terminal that key-based SSH and sudo work. Cancelling makes the protected changes permanent.")"
