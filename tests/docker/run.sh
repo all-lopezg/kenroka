@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Maneja los escenarios end-to-end de secure-vps.sh sobre contenedores
-# Ubuntu 24.04 con systemd real.
+# Ubuntu 22.04, 24.04 y 26.04 con systemd real.
 #
 #   tests/docker/run.sh                 todas las escenas (Ubuntu 24.04)
 #   tests/docker/run.sh --distro 22.04  misma suite contra Ubuntu 22.04
+#   tests/docker/run.sh --distro 26.04  validación experimental de Ubuntu 26.04
 #   tests/docker/run.sh --only 05       una sola escena
 #   tests/docker/run.sh --keep          deja los contenedores arriba al final
 #   tests/docker/run.sh --rebuild       fuerza docker compose build
@@ -59,8 +60,8 @@ if [[ ! -f "$WORK_DIR/keys/id_ed25519" ]]; then
 fi
 
 case "$UBUNTU" in
-    22.04|24.04) ;;
-    *) die "--distro solo acepta 22.04 o 24.04 (matriz probada); llegó '$UBUNTU'" ;;
+    22.04|24.04|26.04) ;;
+    *) die "--distro solo acepta 22.04, 24.04 o 26.04 (objetivos de pruebas); llegó '$UBUNTU'" ;;
 esac
 
 # --- build ---

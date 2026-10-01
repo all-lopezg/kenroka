@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.4.11"
+readonly SCRIPT_VERSION="1.5.0"
 readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
@@ -577,6 +577,7 @@ check_os() {
     # 24.04 y 22.04 tienen escenarios e2e propios; cualquier otra versión
     # continuaría con advertencia explícita en vez de negarse a ayudar.
     case "${VERSION_ID:-}" in
+        26.04) warn "$(ui 'Ubuntu 26.04: soporte experimental; falta validar amd64 y reinicio en VPS.' 'Ubuntu 26.04: experimental support; amd64 and VPS reboot validation remain pending.')" ;;
         24.04|22.04) success "$(ui "Ubuntu $VERSION_ID probado con escenarios e2e." "Ubuntu $VERSION_ID is covered by e2e scenarios.")" ;;
         *)
             warn "$(ui "Ubuntu $VERSION_ID no está en la matriz de pruebas (22.04 y 24.04 sí lo están). Revisa los cambios tú mismo." "Ubuntu $VERSION_ID is not in the test matrix (22.04 and 24.04 are). Review the changes yourself.")"
@@ -634,6 +635,7 @@ cat <<EOF
 Uso: sudo bash $0 [OPCIONES]
 
 Versiones con pruebas end-to-end: Ubuntu 22.04 y 24.04.
+Ubuntu 26.04: soporte experimental; validación en Docker arm64.
 
 Opciones:
   --non-interactive    Modo no interactivo (para Ansible/CI).
@@ -685,6 +687,7 @@ cat <<EOF
 Usage: sudo bash $0 [OPTIONS]
 
 Versions covered by end-to-end tests: Ubuntu 22.04 and 24.04.
+Ubuntu 26.04: experimental support; validation in arm64 Docker.
 
 Options:
   --non-interactive    Non-interactive mode (for Ansible/CI).
@@ -971,7 +974,9 @@ current_ssh_port() {
 ssh_activation_summary() {
     if [[ $SOCKET_ACTIVATED -eq 1 ]]; then
         if has_socket_generator; then
-            echo "    $(ui "ssh.socket + generador de Ubuntu 24.04: el puerto se manda con 'Port'." "ssh.socket + Ubuntu 24.04 generator: the port is driven by 'Port'.")"
+            local generator_version=24.04
+            [[ ${VERSION_ID:-} == 26.04 ]] && generator_version=26.04
+            echo "    $(ui "ssh.socket + generador de Ubuntu $generator_version: el puerto se manda con 'Port'." "ssh.socket + Ubuntu $generator_version generator: the port is driven by 'Port'.")"
         else
             echo "    $(ui "ssh.socket sin generador: el puerto se manda con un drop-in de ListenStream." "ssh.socket without generator: the port is driven by a ListenStream drop-in.")"
         fi
@@ -3149,6 +3154,10 @@ audit_section_system() {
     audit_line info "$(ui "Tiempo encendido" "Uptime")" "${up:-?}"
     audit_line info "$(ui "IP publica" "Public IP")" "${PUBLIC_IP:-$(ui "sin consultar: --audit no hace peticiones salientes" "not looked up: --audit makes no outbound request")}"
     case "$VERSION_ID" in
+        26.04)
+            audit_line warn "$(ui 'Soporte experimental' 'Experimental support')" "$VERSION_ID"
+            audit_note "$(ui '26.04 se valida en Docker arm64; amd64 y reinicio real en VPS siguen pendientes.' '26.04 is being validated in arm64 Docker; amd64 and a real VPS reboot remain pending.')"
+            ;;
         22.04|24.04)
             audit_line ok "$(ui "Version probada" "Tested version")" "$VERSION_ID"
             ;;

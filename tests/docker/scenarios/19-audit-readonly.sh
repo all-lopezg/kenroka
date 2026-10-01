@@ -64,7 +64,7 @@ expect_match "reporta el jail sshd servido" "jail sshd" "$out"
 expect_match "y que nadie esta excluido del ban" "sin excluir" "$out"
 expect_match "cierra con los hallazgos numerados" "  1\) " "$out"
 expect_match "propone el comando con el usuario detectado" \
-    "sudo bash /opt/secure-vps.sh --port 2222 --user ubuntu" "$out"
+    "sudo bash /opt/secure-vps.sh --port 24022 --user ubuntu" "$out"
 expect_match "y recuerda que no escribió nada" "--audit solo lee" "$out"
 expect_nomatch "no corre ninguna fase" "FASE 1:|Snapshot guardado|Backup creado|UFW activado" "$out"
 expect_nomatch "no hace ninguna pregunta" "Presiona Enter|¿Continuar|acceso-ok" "$out"

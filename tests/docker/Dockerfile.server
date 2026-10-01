@@ -9,12 +9,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Sin --no-install-recommends: así los deps reflejan un `apt install fail2ban`
 # de verdad en un VPS (p.ej. python3-systemd, que necesita el backend systemd).
-RUN apt-get update \
+RUN . /etc/os-release \
+ && sudo_package=sudo \
+ && if [ "$VERSION_ID" = "26.04" ]; then sudo_package=sudo-rs; fi \
+ && apt-get update \
  && apt-get install -y --assume-yes \
-      openssh-server openssh-client ufw fail2ban sudo \
+      openssh-server openssh-client ufw fail2ban "$sudo_package" \
       iproute2 procps curl ca-certificates socat \
       systemd systemd-sysv dbus kmod unattended-upgrades apt-listchanges \
  && rm -rf /var/lib/apt/lists/*
+
+# sudo-common en la imagen mínima 26.04 instala sudoers con 0644; visudo-rs
+# exige 0440. Preparar una fixture válida sin relajar la validación del script.
+RUN . /etc/os-release \
+ && if [ "$VERSION_ID" = "26.04" ]; then chmod 0440 /etc/sudoers; fi
 
 # Unidades que no aportan nada dentro de un contenedor y ensucian el arranque.
 # systemd-logind se queda activo a propósito: 'who' tiene que mostrar las

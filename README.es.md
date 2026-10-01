@@ -242,7 +242,8 @@ UFW y Fail2ban. Una confirmación que llega después de la reversión se rechaza
 
 ## Requisitos
 
-- Ubuntu **22.04** o **24.04**. Otras versiones de Ubuntu se detectan y se avisa, pero no están cubiertas por la suite de pruebas.
+- Ubuntu **22.04** o **24.04**.
+- Ubuntu **26.04**, experimental: integración en Docker arm64. Faltan amd64, reinicio real de un VPS y migración desde 24.04; consulta el [plan y las evidencias](docs/plan-ubuntu-26.04.md). Otras versiones no están cubiertas por las pruebas.
 - Acceso root o un `sudo` que funcione.
 - Una segunda terminal para probar el acceso SSH.
 - Recomendado encarecidamente tener disponible la consola web / de recuperación de
@@ -302,13 +303,14 @@ el rescate desde el menú y la verificación final con confirmación humana, per
 del reporte y detección de servicios caídos.
 
 - **22** escenarios end-to-end
-- **345** asertos unitarios
-- **17** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
+- **484** asertos unitarios
+- **30** asertos del instalador, incluido rechazar un archivo manipulado y una firma de otra mano
 
 ```bash
 ./tests/run.sh unit
 ./tests/docker/run.sh --distro 24.04
 ./tests/docker/run.sh --distro 22.04
+./tests/docker/run.sh --distro 26.04 # experimental
 ```
 
 ## Licencia

@@ -239,7 +239,8 @@ changes. A confirmation arriving after rollback is rejected.
 
 ## Requirements
 
-- Ubuntu **22.04** or **24.04**. Other Ubuntu versions are detected and reported, but are not covered by the test suite.
+- Ubuntu **22.04** or **24.04**.
+- Ubuntu **26.04**, experimental: integration in arm64 Docker. amd64, a real VPS reboot and migration from 24.04 remain pending; see the [plan and evidence](docs/plan-ubuntu-26.04.md). Other versions are not covered by tests.
 - Root access or working `sudo`.
 - A second terminal for testing SSH access.
 - Keeping your provider's recovery / web console available is strongly recommended;
@@ -299,13 +300,14 @@ read-only mode leaving no trace on disk, and final verification with human
 confirmation, report permissions and stopped-service detection.
 
 - **22** end-to-end scenarios
-- **345** unit assertions
-- **17** installer assertions, including refusing a tampered file and a foreign signature
+- **484** unit assertions
+- **30** installer assertions, including refusing a tampered file and a foreign signature
 
 ```bash
 ./tests/run.sh unit
 ./tests/docker/run.sh --distro 24.04
 ./tests/docker/run.sh --distro 22.04
+./tests/docker/run.sh --distro 26.04 # experimental
 ```
 
 ## License

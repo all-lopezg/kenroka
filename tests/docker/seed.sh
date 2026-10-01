@@ -49,10 +49,10 @@ printf 'PasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/50-cloud-init.con
 chmod 644 /etc/ssh/sshd_config.d/50-cloud-init.conf
 
 # 5) Claves de host, y el esquema de arranque de ssh que trae cada versión:
-#    24.04 usa ssh.socket (activación por socket); 22.04, ssh.service clásico.
+#    24.04 y 26.04 usan ssh.socket; 22.04, ssh.service clásico.
 ssh-keygen -A >/dev/null 2>&1
 . /etc/os-release
-if [[ "${VERSION_ID:-}" == "24.04" ]]; then
+if [[ "${VERSION_ID:-}" == "24.04" || "${VERSION_ID:-}" == "26.04" ]]; then
     systemctl enable ssh.socket ssh.service >/dev/null 2>&1
     systemctl restart ssh.socket ssh.service 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 else
