@@ -139,3 +139,10 @@ repitieron los demás escenarios de la suite anterior.
 
 SHA256 del script v1.5.2 firmado:
 `606bab9a082c9987fb49d9c23f8ca59c264f34ec54d90a3b79b7558c0df6ca64`.
+
+La release v1.5.2 se publicó como estable y latest, con los tres assets firmados.
+Se repitió el escenario 24 contra las descargas públicas reales con GNU awk
+por defecto: **14 comprobaciones aprobadas, 0 fallos**. El comando exacto abre
+el menú de v1.5.2 y la guía desde esa release termina con los tres checkpoints
+SSH/sudo reales aprobados, root/contraseñas cerrados, UFW y Fail2ban activos y
+sin rollback pendiente. El formato de invocación del instalador no cambió.
