@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.4.11
+# Versión: 1.5.1
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.5.0"
+readonly SCRIPT_VERSION="1.5.1"
 # Fuera del glob de drop-ins: se incluye una sola vez, antes de la configuración
 # del proveedor (OpenSSH conserva el primer valor global que lee).
 readonly HARDENING_FILE="/etc/ssh/secure-vps.conf"
