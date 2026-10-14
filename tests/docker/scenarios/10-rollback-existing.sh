@@ -6,7 +6,8 @@ source "$HERE/lib.sh"
 
 CMD_ARGS=(--run-all --yes --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd)
 SNAPSHOT_FILES=(
-    /etc/ssh/sshd_config.d/99-hardening.conf
+    /etc/ssh/sshd_config
+    /etc/ssh/secure-vps.conf
     /etc/ssh/sshd_config.d/50-cloud-init.conf
     /etc/ufw/user.rules
     /etc/ufw/user6.rules

@@ -21,7 +21,11 @@ set -euo pipefail
 # CONFIGURACIÓN GLOBAL
 # ============================================================
 readonly SCRIPT_VERSION="1.5.0"
-readonly HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
+# Fuera del glob de drop-ins: se incluye una sola vez, antes de la configuración
+# del proveedor (OpenSSH conserva el primer valor global que lee).
+readonly HARDENING_FILE="/etc/ssh/secure-vps.conf"
+readonly LEGACY_HARDENING_FILE="/etc/ssh/sshd_config.d/99-hardening.conf"
+readonly SSHD_CONFIG="/etc/ssh/sshd_config"
 # No es readonly a propósito: check_backup_exists puede reutilizar el backup de
 # una corrida anterior en vez de dejar otro .bak en /etc/ssh cada vez.
 BACKUP_FILE="/etc/ssh/sshd_config.bak.$(date +%Y%m%d-%H%M%S)"
@@ -1004,7 +1008,7 @@ snapshot_state() {
     mkdir -p "$SNAPSHOTS_DIR" || return 1
     chmod 700 "$STATE_DIR" "$SNAPSHOTS_DIR" || return 1
     SNAP_DIR=$(mktemp -d "$SNAPSHOTS_DIR/$(date +%Y%m%d-%H%M%S).XXXXXX") || return 1
-    printf '%s\n' /etc/ssh/sshd_config "$HARDENING_FILE" "$CLOUD_INIT_FILE" \
+    printf '%s\n' "$SSHD_CONFIG" "$HARDENING_FILE" "$LEGACY_HARDENING_FILE" "$CLOUD_INIT_FILE" \
         "$SOCKET_DROPIN" "$JAIL_LOCAL" /etc/ufw/user.rules /etc/ufw/user6.rules \
         /etc/ufw/ufw.conf /etc/default/ufw > "$SNAP_DIR/paths" || return 1
     while IFS= read -r path; do
@@ -1963,10 +1967,13 @@ write_hardening_file() {
     # Las líneas Port las escribió la fase 7: este archivo es nuestro, así que
     # hay que preservarlas o volver a correr el script devolvería SSH al 22
     # mientras UFW y fail2ban siguen apuntando al puerto nuevo.
-    local puertos_existentes="" acceso_existente=""
-    if [[ -f "$HARDENING_FILE" ]]; then
-        puertos_existentes=$(awk '$1 == "Port" {print $2}' "$HARDENING_FILE") || return 1
-        acceso_existente=$(awk '$1 ~ /^(PermitRootLogin|PasswordAuthentication|KbdInteractiveAuthentication|AllowUsers)$/ {print}' "$HARDENING_FILE") || return 1
+    local puertos_existentes="" acceso_existente="" source_file="$HARDENING_FILE"
+    if [[ ! -f "$source_file" && -f "$LEGACY_HARDENING_FILE" ]]; then
+        source_file="$LEGACY_HARDENING_FILE"
+    fi
+    if [[ -f "$source_file" ]]; then
+        puertos_existentes=$(awk '$1 == "Port" {print $2}' "$source_file") || return 1
+        acceso_existente=$(awk '$1 ~ /^(PermitRootLogin|PasswordAuthentication|KbdInteractiveAuthentication|AllowUsers)$/ {print}' "$source_file") || return 1
     fi
 
     cat > "$HARDENING_FILE" <<EOF || return 1
@@ -2005,6 +2012,30 @@ EOF
     done
 }
 
+# El snapshot ya contiene ambos archivos y sshd_config antes de llamar aquí.
+# Mantener el archivo fuera de *.conf evita incluir Port/AllowUsers dos veces.
+# No se alteran directivas ni bloques Match del proveedor: si aún contradicen
+# la política, la verificación efectiva aborta y restaura el snapshot.
+install_hardening_include() {
+    local include="Include $HARDENING_FILE" tmp
+    [[ -f "$SSHD_CONFIG" && -f "$HARDENING_FILE" ]] || return 1
+    if [[ "$(head -n 1 "$SSHD_CONFIG")" != "$include" ]]; then
+        tmp=$(mktemp "${SSHD_CONFIG}.secure-vps.XXXXXX") || return 1
+        if ! { printf '%s\n' "$include"; awk -v include="$include" '$0 != include' "$SSHD_CONFIG"; } > "$tmp"; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        # Escribir sobre el archivo conserva propietario, modo y enlaces.
+        if ! cat "$tmp" > "$SSHD_CONFIG"; then
+            rm -f -- "$tmp"
+            return 1
+        fi
+        rm -f -- "$tmp" || return 1
+    fi
+    chmod 644 "$HARDENING_FILE" || return 1
+    rm -f -- "$LEGACY_HARDENING_FILE" || return 1
+}
+
 # Pregunta a sshd cómo respondería para ese usuario, con la config nueva en disco.
 # Si sshd no nos dice nada, NO se asume bueno: sin evidencia no se cierra el acceso.
 verify_effective_access() {
@@ -2037,6 +2068,12 @@ verify_effective_access() {
                 return 1
             fi
         done
+        # Un Match User root puede reabrir root aunque el administrador pase.
+        out=$(sshd -T -C "user=root,host=$client_addr,addr=$client_addr") || return 1
+        if ! grep -qxF 'permitrootlogin no' <<< "$out"; then
+            error "$(ui "La política efectiva de root permite acceso SSH; revisa los bloques Match de root." "The effective root policy allows SSH access; check root Match blocks.")"
+            return 1
+        fi
     fi
     success "$(ui "Políticas SSH comprobadas; falta probar una conexión nueva con clave y sudo." "SSH policies verified; still need to test a fresh connection with key and sudo.")"
 }
@@ -2326,7 +2363,7 @@ fase_3_harden_ssh() {
     fi
 
     info "$(ui "Escribiendo $HARDENING_FILE" "Writing $HARDENING_FILE")"
-    if ! write_hardening_file; then
+    if ! write_hardening_file || ! install_hardening_include; then
         revert_now "$(ui "No pude escribir el endurecimiento." "Could not write the hardening.")"
         return 1
     fi
@@ -2706,7 +2743,10 @@ EOF
 # Deja el archivo de endurecimiento con exactamente estos puertos.
 hardening_set_ports() {
     local p tmp
-    tmp=$(mktemp)
+    if [[ ! -f "$HARDENING_FILE" && -f "$LEGACY_HARDENING_FILE" ]]; then
+        cp -a -- "$LEGACY_HARDENING_FILE" "$HARDENING_FILE" || return 1
+    fi
+    tmp=$(mktemp) || return 1
     grep -vE '^[[:space:]]*Port[[:space:]]+[0-9]+[[:space:]]*$' "$HARDENING_FILE" > "$tmp" 2>/dev/null || true
     for p in "$@"; do
         printf 'Port %s\n' "$p" >> "$tmp"
@@ -2828,7 +2868,7 @@ fase_7_change_port() {
     if [[ $NON_INTERACTIVE -eq 0 && $ALLOW_LOCKDOWN -eq 0 ]]; then
         arm_rollback || return 1
     fi
-    if ! hardening_set_ports "$CURRENT_PORT" "$NEW_PORT"; then
+    if ! hardening_set_ports "$CURRENT_PORT" "$NEW_PORT" || ! install_hardening_include; then
         revert_now "$(ui "No pude escribir la transición de puertos." "Could not write the port transition.")"
         return 1
     fi
@@ -3298,8 +3338,8 @@ audit_section_ssh() {
         audit_note "$(ui "sshd -t falla: 'sshd -T' y el cierre de acceso no son fiables hasta arreglarlo." "sshd -t fails: neither sshd -T nor a lock-down is trustworthy until this is fixed.")"
     fi
 
-    # sshd guarda el PRIMER valor que ve de cada clave: un drop-in ajeno con
-    # nombre anterior a 99-hardening gana aunque el nuestro diga lo contrario.
+    # Los drop-ins pueden contradecir el endurecimiento. La configuración
+    # efectiva anterior determina si se aplican; el texto por sí solo no basta.
     audit_dropin_scan /etc/ssh/sshd_config.d
 }
 
@@ -3311,7 +3351,7 @@ audit_dropin_scan() {
         [[ -f "$f" ]] || continue
         audit_line info "$(basename "$f")" "$(grep -cvE '^[[:space:]]*(#|$)' "$f" 2>/dev/null || true) $(ui "lineas" "lines")"
         if grep -qiE '^[[:space:]]*(PasswordAuthentication[[:space:]]+yes|KbdInteractiveAuthentication[[:space:]]+yes|PermitRootLogin[[:space:]]+(yes|without-password|prohibit-password))' "$f"; then
-            audit_note "$(ui "El drop-in $f reabre contraseña o root y sshd usa el primer valor que lee: hay que corregirlo (la fase 3 lo hace)." "The drop-in $f reopens password or root access and sshd uses the first value it reads: it must be corrected (phase 3 does it).")"
+            audit_note "$(ui "El drop-in $f declara acceso por contraseña o root; revisa la configuración efectiva y los bloques Match. La fase 3 da prioridad a las políticas globales de Kenroka." "The drop-in $f declares password or root access; check the effective configuration and Match blocks. Phase 3 gives priority to Kenroka global policies.")"
         fi
     done
     return 0

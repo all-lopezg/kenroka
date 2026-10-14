@@ -51,8 +51,8 @@ sshd_get()  { on_server "sshd -T 2>/dev/null | awk '/^$1 /{print \$2}' | head -1
 sshd_ports() { on_server "sshd -T 2>/dev/null | awk '/^port /{print \$2}' | paste -sd, -"; }
 listening() { on_server "ss -Htln 2>/dev/null | awk '{print \$4}' | grep -oE '[0-9]+\$' | sort -un | paste -sd, -"; }
 socket_listen() { on_server "systemctl show -p Listen --value ssh.socket 2>/dev/null | grep -oE ':[0-9]+' | tr -d ':' | sort -un | paste -sd, -"; }
-hardening_exists() { on_server "test -f /etc/ssh/sshd_config.d/99-hardening.conf && echo si || echo no"; }
-hardening_get() { on_server "awk '/^$1 /{print \$2}' /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null | head -1"; }
+hardening_exists() { on_server "test -f /etc/ssh/secure-vps.conf && echo si || echo no"; }
+hardening_get() { on_server "awk '/^$1 /{print \$2}' /etc/ssh/secure-vps.conf 2>/dev/null | head -1"; }
 ufw_rules() {
     ufw_dump | awk '/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]+[^[:space:]].*[[:space:]]+(LIMIT|ALLOW)[[:space:]]+IN[[:space:]]+[^[:space:]]/ {n++} END {print n+0}'
 }

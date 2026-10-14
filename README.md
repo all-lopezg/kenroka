@@ -128,6 +128,14 @@ which protection remains in place. The normal path is:
 7. **Phase 7 — Optional SSH port change:** keep the old port open, test the new one, then
    remove the old port only after the test succeeds.
 
+Phase 3 includes `/etc/ssh/secure-vps.conf` at the start of `sshd_config`, before
+provider settings: OpenSSH keeps the first global value it reads. Migration
+from earlier versions preserves existing ports and access restrictions from
+`99-hardening.conf` and removes that old file. The snapshot contains both files
+and `sshd_config`, so restoration also recovers the original order. Effective
+configuration checks still cover `Match` blocks; conflicting policies stop the
+phase.
+
 ### SSH key: what to provide
 
 Create the key pair on **your computer**, for example with `ssh-keygen -t ed25519`,

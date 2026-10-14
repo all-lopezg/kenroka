@@ -5,6 +5,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib.sh"
 
+# Proveedor con un drop-in anterior a cloud-init y una directiva previa al Include.
+on_server "printf 'PasswordAuthentication yes\nPermitRootLogin yes\n' > /etc/ssh/sshd_config.d/00-provider.conf; sed -i '1i PasswordAuthentication yes' /etc/ssh/sshd_config"
+
 echo "  simulando: 'ya tengo otra sesión abierta y funciona'"
 start_admin_session
 ADMIN_IP="$(client_ip)"

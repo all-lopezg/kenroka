@@ -129,6 +129,14 @@ protección queda activa. El recorrido normal es:
 7. **Fase 7 — Cambio opcional de puerto SSH:** conservar el puerto anterior, probar el nuevo
    y quitar el anterior solo después de que la prueba funcione.
 
+La fase 3 incluye `/etc/ssh/secure-vps.conf` al principio de `sshd_config`,
+antes de las opciones del proveedor: OpenSSH conserva el primer valor global
+que lee. Al migrar desde versiones anteriores, conserva los puertos y las
+restricciones existentes de `99-hardening.conf` y retira ese archivo antiguo.
+El snapshot contiene ambos archivos y `sshd_config`, por lo que la restauración
+recupera también el orden original. Los bloques `Match` siguen comprobándose
+con la configuración efectiva; una política incompatible detiene la fase.
+
 ### Clave SSH: qué debes entregar
 
 Crea el par de claves en **tu computadora**, por ejemplo con `ssh-keygen -t ed25519`,

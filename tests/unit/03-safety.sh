@@ -19,6 +19,8 @@ date() { printf '20260928-120000\n'; }
 STATE_DIR="$WORK/state"
 SNAPSHOTS_DIR="$STATE_DIR/snapshots"
 HARDENING_FILE="$WORK/hardening"
+LEGACY_HARDENING_FILE="$WORK/legacy-hardening"
+SSHD_CONFIG="$WORK/sshd_config"
 CLOUD_INIT_FILE="$WORK/cloud-init"
 SOCKET_DROPIN="$WORK/socket"
 JAIL_LOCAL="$WORK/jail"
@@ -67,8 +69,13 @@ chmod +x "$ROLLBACK_BIN"
 
 echo "== snapshot fijo de la cuenta atrás"
 PENDING_TIMER=""
+printf 'Include /etc/ssh/sshd_config.d/*.conf\n' > "$SSHD_CONFIG"
+printf 'Port 2222\n' > "$LEGACY_HARDENING_FILE"
 snapshot_state >/dev/null || exit 1
 original="$SNAP_DIR"
+cmp -s "$SSHD_CONFIG" "$original/files$SSHD_CONFIG" && ok "snapshot conserva el orden de includes original" || bad "snapshot sin sshd_config"
+cmp -s "$LEGACY_HARDENING_FILE" "$original/files$LEGACY_HARDENING_FILE" && ok "snapshot conserva el archivo legado antes de migrar" || bad "snapshot sin archivo legado"
+has "snapshot registra archivo nuevo ausente para retirarlo al restaurar" "$HARDENING_FILE" "$(cat "$original/paths")"
 printf 'firewall=inactivo\n' > "$SIM_STATE"
 cp "$SIM_STATE" "$original/sim-state"
 arm_rollback >/dev/null || exit 1

@@ -26,7 +26,7 @@ expect_match "el operador confirmó y se retiró el puerto viejo" "Quitando el p
 expect_eq "SSH quedó solo en 24022" "24022" "$(ssh_ports)"
 expect_eq "sshd ya no ofrece el 22" "24022" "$(sshd_ports)"
 expect_eq "el puerto vive en sshd_config.d" "24022" \
-    "$(on_server "awk '/^Port /{print \$2}' /etc/ssh/sshd_config.d/99-hardening.conf | paste -sd, -")"
+    "$(on_server "awk '/^Port /{print \$2}' /etc/ssh/secure-vps.conf | paste -sd, -")"
 if [[ "$(socket_activated)" == si ]]; then
     expect_eq "y el socket escucha en el puerto nuevo" "24022" "$(socket_listen)"
 fi

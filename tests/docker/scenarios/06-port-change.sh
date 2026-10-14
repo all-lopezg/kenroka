@@ -22,7 +22,7 @@ if [[ "$SOCKED" == si ]]; then
 fi
 expect_eq "y eso es lo que se ve en la red" "2222" "$(ssh_ports)"
 expect_eq "el puerto se manda con Port en sshd_config.d" "2222" \
-    "$(on_server "awk '/^Port /{print \$2}' /etc/ssh/sshd_config.d/99-hardening.conf | paste -sd, -")"
+    "$(on_server "awk '/^Port /{print \$2}' /etc/ssh/secure-vps.conf | paste -sd, -")"
 # En 24.04 el generador de systemd traduce 'Port' a ListenStream y escribe su
 # propio drop-in; un ListenStream manual quedaría aplastado por el suyo.
 if [[ "$GENER" == si ]]; then

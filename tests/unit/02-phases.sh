@@ -18,7 +18,9 @@ SCRIPT_VERSION="test"
 # esto, cualquier funcion que los cite revienta por set -u en el arnés.
 RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' NC=''
 REBOOT_FLAG="$WORK/reboot-required"
-HARDENING_FILE="$WORK/99-hardening.conf"
+HARDENING_FILE="$WORK/secure-vps.conf"
+LEGACY_HARDENING_FILE="$WORK/99-hardening.conf"
+SSHD_CONFIG="$WORK/sshd_config"
 JAIL_LOCAL="$WORK/jail.local"
 LOG_FILE="$WORK/out.log"
 PUBLIC_IP="203.0.113.9"
@@ -36,7 +38,7 @@ extract_fns phase_guide hardening_set_ports write_fail2ban_jail \
             validate_pubkey warn_listening_services existing_key_present \
             detect_admin_ips resolve_pubkey _pubkey_normalize lockdown_possible \
             _file_mode _file_owner world_or_group_writable \
-            password_state write_hardening_file valid_username ui current_admin_ips \
+            password_state write_hardening_file install_hardening_include valid_username ui current_admin_ips \
             guided_active resolve_guided_mode detect_session_kind valid_ip_or_cidr \
             apt_pending_counts report_pending_updates reboot_hint fase_2b_updates \
             other_human_users check_original_user \
@@ -447,7 +449,7 @@ to_file audit_dropin_scan "$WORK/aud/dropins"
 out="$(cat "$WORK/aud/out")"
 has "lista los dos archivos" "50-cloud-init.conf" "$out"
 has "con su numero de lineas" "2 lineas" "$out"
-note_has "reabre contraseña o root"
+note_has "declara acceso por contraseña o root"
 reset_audit
 to_file audit_dropin_scan "$WORK/aud/noexiste"
 check "un directorio ausente no aborta" "0" "$?"
