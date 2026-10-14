@@ -5,6 +5,7 @@ import pty
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 compose, mode = sys.argv[1:]
 if mode not in ('menu', 'guided'):
@@ -20,6 +21,7 @@ probe_command = base + ['exec', '-T', 'client', 'bash', '-lc',
     "ssh -p 22 -i /keys/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=no "
     "-o UserKnownHostsFile=/dev/null -o PreferredAuthentications=publickey "
     "-o PasswordAuthentication=no tester@server 'whoami && sudo -n true'"]
+live_log = (Path(compose).parent / ".work" / "logs" / f"public-installer-{mode}.pty.log").open("wb")
 signal.alarm(600)
 pid, fd = pty.fork()
 if pid == 0:
@@ -27,6 +29,7 @@ if pid == 0:
 output = b''
 answered = pauses = 0
 menu_exited = failed = False
+sudo_answered = language_answered = False
 while True:
     try:
         data = os.read(fd, 65536)
@@ -35,7 +38,17 @@ while True:
     if not data:
         break
     output += data
+    live_log.write(data)
+    live_log.flush()
+    # sudo-rs -v may ask for the fixture account password even with NOPASSWD.
+    if not sudo_answered and (b'password for ubuntu' in output.lower() or
+                               b'[sudo: authenticate] password:' in output.lower()):
+        os.write(fd, b'semilla-test\n')
+        sudo_answered = True
     if mode == 'menu':
+        if not language_answered and b'[1/2]' in output:
+            os.write(fd, b'2\n')
+            language_answered = True
         if not menu_exited and (b'Type an option:' in output or b'Escribe una opci' in output):
             os.write(fd, b'0\n')
             menu_exited = True

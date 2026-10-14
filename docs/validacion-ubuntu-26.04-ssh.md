@@ -77,5 +77,44 @@ corregido escribe `/etc/ssh/secure-vps.conf`; por tanto, esa ejecución usó el
 script anterior. La consulta de GitHub confirmó que `releases/latest` seguía
 siendo la release estable `v1.4.11`, mientras la corrección estaba en `main`.
 El instalador habitual descarga `releases/latest`, por lo que subir un commit
-no actualiza el script que ese instalador entrega. No se publicó una release
-nueva durante esta validación.
+no actualiza el script que ese instalador entrega. En esa primera fase se publicó el cambio en main, sin actualizar la release
+estable. La publicación y prueba del instalador se documentan a continuación.
+
+## Release estable y prueba del comando público
+
+Posteriormente se publicó **v1.5.1 como release estable y latest**, con el
+script, checksum y firma de Kenroka. GitHub confirmó `draft=false` y
+`prerelease=false`. El instalador permanece en su URL habitual y no requiere
+variables ni una descarga manual del script.
+
+Script publicado: SHA256
+`56e948de47442e080de6e3781c16d386b6519daca53165177ddab254883604ff`.
+Respecto al script validado inicialmente, solo cambia la versión declarada
+(cabecera y SCRIPT_VERSION).
+
+Se ejecutó el nuevo escenario 24 sobre Ubuntu 26.04.1 arm64 contra las URLs
+públicas reales de GitHub, sin servidor local ni sustitución de claves:
+
+```bash
+bash tests/docker/run.sh --distro 26.04 --only 24
+```
+
+Resultado: **14 comprobaciones aprobadas, 0 fallos**.
+
+- El comando exacto `curl -fsSL https://raw.githubusercontent.com/all-lopezg/kenroka/main/install.sh | bash`
+  descarga v1.5.1, verifica firma/checksum, pide sudo y selección de idioma,
+  abre el menú y permite salir.
+- Una segunda ejecución del mismo instalador, con flags de guía de laboratorio,
+  descarga la misma release pública y completa el hardening pese a las opciones
+  contradictorias del proveedor. En cada checkpoint se abre una conexión real
+  desde el cliente y se comprueba sudo antes de confirmar.
+- La salida incluye `/etc/ssh/secure-vps.conf` y `HARDENING DEL ACCESO COMPLETADO`.
+  Root y contraseñas quedan cerrados, el administrador entra tras UFW, Fail2ban
+  está activo y no hay protección temporizada pendiente.
+
+El controlador se adaptó al prompt `[sudo: authenticate] Password:` de sudo-rs
+(con la contraseña conocida de la cuenta de laboratorio) y a la selección
+inicial de idioma. Esas respuestas no cambian el instalador ni sus controles.
+Las 30 comprobaciones locales del instalador también se repitieron con v1.5.1
+y aprobaron. Resultado conjunto de escenarios: 24 aprobados, 391 comprobaciones
+externas, más las 34 internas de seguridad indicadas antes.
