@@ -9,7 +9,6 @@ source "$HERE/lib.sh"
 
 echo "  primera pasada: endurecer y mover a 2222"
 start_admin_session
-sha0="$(on_server "sha256sum /etc/ssh/sshd_config | awk '{print \$1}'")"
 
 out="$(run_vps_in 's\ns\ns\ns\n' --run-all --yes --port 2222 \
         --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
@@ -18,6 +17,8 @@ expect_eq "primera pasada ok" 0 "$rc"
 expect_eq "SSH en 2222" "2222" "$(ssh_ports)"
 expect_match "UFW activo" "Status: active" "$(ufw_active)"
 expect_eq "sin cuenta atrás pendiente" "" "$(pending_rollbacks)"
+# El último snapshot es posterior al endurecimiento y conserva su Include.
+sha_hardened="$(on_server "sha256sum /etc/ssh/sshd_config | awk '{print \$1}'")"
 
 echo "  opción 3.2 del menú: revertir al último snapshot"
 out2="$(run_vps_in '3.2\ns\n0\n' --user tester --pubkey-file /keys/id_ed25519.pub --sudo nopasswd 2>&1)"
@@ -29,7 +30,7 @@ expect_match "confirma la restauración" "Estado restaurado" "$out2"
 expect_eq "el puerto volvió al 22" "22" "$(ssh_ports)"
 expect_eq "sshd también" "22" "$(sshd_ports)"
 expect_eq "la config quedó sin Port 2222" "" "$(hardening_get Port)"
-expect_eq "sshd_config intacto byte a byte" "$sha0" \
+expect_eq "sshd_config endurecido restaurado byte a byte" "$sha_hardened" \
     "$(on_server "sha256sum /etc/ssh/sshd_config | awk '{print \$1}'")"
 expect_match "UFW sigue activo (el snapshot es posterior a la fase 4)" "Status: active" "$(ufw_active)"
 expect_nomatch "sin la regla del 2222" "2222" "$(ufw_dump)"

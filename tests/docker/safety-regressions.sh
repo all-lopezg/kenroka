@@ -54,6 +54,7 @@ snapshot_state
 original="$SNAP_DIR"
 arm_rollback
 hardening_set_ports 22 2222
+install_hardening_include
 ufw limit 2222/tcp
 restart_ssh
 expect test "$(listening_ports)" = '22 2222 '
@@ -80,6 +81,7 @@ snapshot_state
 original="$SNAP_DIR"
 arm_rollback
 hardening_set_ports 22 2222
+install_hardening_include
 ufw limit 2222/tcp
 restart_ssh
 saved_finalize_fn=$(declare -f finalize_old_port_removal)
