@@ -3,9 +3,10 @@
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$HERE/lib.sh"
 start_admin_session
+expected_version="$(awk -F'"' '/^readonly SCRIPT_VERSION=/{print $2; exit}' "$REPO_ROOT/secure-vps.sh")"
 out="$(python3 "$HERE/helpers/public-installer-pty.py" "$COMPOSE" menu 2>&1)"; rc=$?
 expect_eq 'el comando exacto abre el menú y permite salir' 0 "$rc"
-expect_match 'descarga la release estable corregida' 'Resolved version: 1.5.1|Versión resuelta: 1.5.1' "$out"
+expect_match 'descarga la release estable corregida' "Resolved version: $expected_version|Versión resuelta: $expected_version" "$out"
 expect_match 'verifica firma pública real' 'Signature valid|Firma válida' "$out"
 expect_match 'verifica checksum público real' 'secure-vps.sh: OK' "$out"
 expect_eq 'abrir el menú no endurece el servidor' no "$(hardening_exists)"

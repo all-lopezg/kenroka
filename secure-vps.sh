@@ -12,7 +12,7 @@
 #                     (--allow-lockdown asume el riesgo: cierra sin prueba humana)
 #
 # Autor: Allan López
-# Versión: 1.5.1
+# Versión: 1.5.2
 #
 
 set -euo pipefail
@@ -20,7 +20,7 @@ set -euo pipefail
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
-readonly SCRIPT_VERSION="1.5.1"
+readonly SCRIPT_VERSION="1.5.2"
 # Fuera del glob de drop-ins: se incluye una sola vez, antes de la configuración
 # del proveedor (OpenSSH conserva el primer valor global que lee).
 readonly HARDENING_FILE="/etc/ssh/secure-vps.conf"
@@ -2017,11 +2017,11 @@ EOF
 # No se alteran directivas ni bloques Match del proveedor: si aún contradicen
 # la política, la verificación efectiva aborta y restaura el snapshot.
 install_hardening_include() {
-    local include="Include $HARDENING_FILE" tmp
+    local include_line="Include $HARDENING_FILE" tmp
     [[ -f "$SSHD_CONFIG" && -f "$HARDENING_FILE" ]] || return 1
-    if [[ "$(head -n 1 "$SSHD_CONFIG")" != "$include" ]]; then
+    if [[ "$(head -n 1 "$SSHD_CONFIG")" != "$include_line" ]]; then
         tmp=$(mktemp "${SSHD_CONFIG}.secure-vps.XXXXXX") || return 1
-        if ! { printf '%s\n' "$include"; awk -v include="$include" '$0 != include' "$SSHD_CONFIG"; } > "$tmp"; then
+        if ! { printf '%s\n' "$include_line"; awk -v managed_line="$include_line" '$0 != managed_line' "$SSHD_CONFIG"; } > "$tmp"; then
             rm -f -- "$tmp"
             return 1
         fi

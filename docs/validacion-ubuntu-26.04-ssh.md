@@ -118,3 +118,24 @@ inicial de idioma. Esas respuestas no cambian el instalador ni sus controles.
 Las 30 comprobaciones locales del instalador también se repitieron con v1.5.1
 y aprobaron. Resultado conjunto de escenarios: 24 aprobados, 391 comprobaciones
 externas, más las 34 internas de seguridad indicadas antes.
+
+## Corrección de GNU awk en v1.5.2
+
+Un VPS que ejecutaba v1.5.1 devolvió `gawk: fatal: cannot use gawk builtin
+include as variable name`. La versión publicada era la correcta; esta vez la
+causa era una incompatibilidad introducida por el helper de Include SSH.
+Las pruebas anteriores usaban otra implementación de awk y no cubrían GNU awk.
+
+Se reprodujo el mismo error en GNU awk 5.3.2 sobre Ubuntu 26.04.1. El helper
+ahora usa `managed_line` en lugar de `include`. Se añadió gawk al servidor de
+pruebas Docker, donde pasa a ser `/usr/bin/awk`, y el nuevo escenario 25 prueba
+el helper con gawk y mawk, incluida la eliminación de un Include gestionado
+previo, conservación de contenido/permisos e idempotencia.
+
+Validaciones nuevas: 601 unitarias; 30 del instalador; escenario 25 (4 externas
++ 15 internas), escenario 23 (8 externas + 15 internas) y escenario 05 (19
+externas) aprobados con GNU awk como implementación predeterminada. No se
+repitieron los demás escenarios de la suite anterior.
+
+SHA256 del script v1.5.2 firmado:
+`606bab9a082c9987fb49d9c23f8ca59c264f34ec54d90a3b79b7558c0df6ca64`.

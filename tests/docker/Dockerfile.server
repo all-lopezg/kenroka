@@ -15,7 +15,7 @@ RUN . /etc/os-release \
  && apt-get update \
  && apt-get install -y --assume-yes \
       openssh-server openssh-client ufw fail2ban "$sudo_package" \
-      iproute2 procps curl ca-certificates socat \
+      iproute2 procps curl ca-certificates socat gawk \
       systemd systemd-sysv dbus kmod unattended-upgrades apt-listchanges \
  && rm -rf /var/lib/apt/lists/*
 
